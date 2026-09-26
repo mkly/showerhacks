@@ -1,0 +1,21 @@
+[project]
+name = "smellcity"
+version = "0.1.0"
+description = "Arcade display for an SGP30 TVOC sensor on Raspberry Pi"
+readme = "README.md"
+authors = [
+    { name = "Mike Lay", email = "mike@mkly.io" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "arcade>=3.3,<4",
+    "pillow>=11,<12",
+    "pyserial>=3.5,<4",
+]
+
+[project.scripts]
+smellcity = "smellcity:main"
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
