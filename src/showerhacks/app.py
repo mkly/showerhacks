@@ -635,22 +635,21 @@ class TVOCWindow(arcade.Window):
                 arcade.draw_lrbt_rectangle_filled(20, 170, 225, 229, BLUE)
                 self._draw_nose()
 
+                round_score = score_for(
+                    self.peak_tvoc, self.score_lower_bound_ppb)
+                self._text(str(round_score), 182, 174, GOLD, 42, ORANGE)
+                self._text("SCORE", 184, 159, BLUE, 10)
                 if readings:
                     latest = readings[-1]
                     current = latest.tvoc_ppb
                     current_is_live = self.session_start is not None and latest.taken_at >= self.session_start
-                    size = 42 if current < 1000 else 32 if current < 10_000 else 24
-                    self._text(str(current), 182, 174, WHITE, size)
-                    self._text("PPB TVOC", 184, 159, BLUE, 10)
+                    current_text = f"TVOC  {current} PPB"
                 else:
                     current = 0
                     current_is_live = False
-                    self._text("WAITING", 184, 185, WHITE, 15)
-                    self._text("FOR SENSOR", 184, 166, WHITE, 15)
-                round_score = score_for(
-                    self.peak_tvoc, self.score_lower_bound_ppb)
+                    current_text = "TVOC  -- PPB"
                 self._line(180, 150, 458, 150, PANEL_LIGHT, 2)
-                self._text(f"SCORE  {round_score}", 182, 128, GOLD, 12)
+                self._text(current_text, 182, 128, GOLD, 12)
                 self._text(f"PEAK  {self.peak_tvoc} PPB", 182, 108, MUTED, 10)
                 current_increase = increase_above_start(
                     current, self.score_lower_bound_ppb) if current_is_live else 0
