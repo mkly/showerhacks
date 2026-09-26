@@ -30,6 +30,9 @@ Install dependencies with `uv sync`. Find the Pico serial port (for example,
 uv run smellcity --port /dev/ttyACM0
 ```
 
+For a sensor-free preview, run `uv run smellcity --dev --windowed --scale 4`.
+Dev mode supplies changing TVOC readings and does not write sensor baselines.
+
 The app opens full screen. It draws to a 480×270 pixel canvas and scales that
 canvas with sharp edges: 4× on the 1080p target display and 8× on a 4K display.
 Use `--windowed` to preview it at native 480×270 pixels. For a larger sharp
@@ -38,8 +41,9 @@ window on a 4K monitor, run
 window. Scaling always uses whole pixels and nearest
 neighbor filtering.
 
-The START button becomes active once a positive TVOC reading arrives. Tap it to
-open a 10-second **GET READY!** screen with the underarm animation. The
+The START button becomes active once a valid TVOC reading arrives, including
+0 ppb during startup. Tap it to
+open a 7-second **GET READY!** screen with the underarm animation. The
 24-second smell round and peak recording begin when that countdown ends. The
 round countdown shows tenths of a second and flashes
 orange during the last five seconds. The nose animation grows stronger at 15

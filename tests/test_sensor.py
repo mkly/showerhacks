@@ -26,6 +26,18 @@ class FakeSensor:
 
 
 class SensorPollerTest(unittest.TestCase):
+    def test_zero_tvoc_is_a_valid_ready_reading(self) -> None:
+        sensor = FakeSensor()
+        sensor.iaq_measure = lambda: (400, 0)
+        poller = SensorPoller(lambda: sensor, interval=0.001)
+        self.assertIsNone(poller.room_reference())
+        poller.start()
+        deadline = time.monotonic() + 2
+        while not poller.snapshot()[0] and time.monotonic() < deadline:
+            time.sleep(0.005)
+        poller.stop()
+        self.assertEqual(poller.room_reference(), 0)
+
     def test_thread_keeps_latest_50_readings(self) -> None:
         sensor = FakeSensor()
         poller = SensorPoller(lambda: sensor, interval=0.001)

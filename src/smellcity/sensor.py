@@ -4,6 +4,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import json
+from math import pi, sin
 from pathlib import Path
 from statistics import median
 from threading import Event, Lock, Thread
@@ -52,6 +53,21 @@ class PicoSensor:
         self._serial.close()
 
 
+class DemoSensor:
+    """Repeat a changing TVOC reading for demos without Pico hardware."""
+
+    def __init__(self) -> None:
+        self._samples = 0
+
+    def iaq_measure(self) -> tuple[int, int]:
+        self._samples += 1
+        tvoc = 230 + max(0, round(270 * sin(self._samples * pi / 15)))
+        return 400, tvoc
+
+    def get_baseline(self) -> tuple[int, int]:
+        return 0, 0
+
+
 @dataclass(frozen=True)
 class Reading:
     taken_at: datetime
@@ -91,11 +107,12 @@ class SensorPoller:
             return list(self._readings), self._error
 
     def room_reference(self) -> int | None:
-        """Median of positive TVOC readings from the last 60 seconds."""
+        """Use positive recent readings, or zero if valid readings are all zero."""
         cutoff = datetime.now().astimezone() - timedelta(seconds=60)
         with self._lock:
-            values = [item.tvoc_ppb for item in self._minute_readings if item.taken_at >= cutoff and item.tvoc_ppb > 0]
-        return round(median(values)) if values else None
+            recent = [item.tvoc_ppb for item in self._minute_readings if item.taken_at >= cutoff]
+        positive = [value for value in recent if value > 0]
+        return round(median(positive)) if positive else 0 if recent else None
 
     def _poll(self) -> None:
         try:

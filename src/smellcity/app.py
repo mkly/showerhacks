@@ -1,6 +1,6 @@
 """Pixel-scaled Arcade dashboard for the latest TVOC and 50-reading trend."""
 
-from .sensor import PicoSensor, Reading, SensorPoller
+from .sensor import DemoSensor, PicoSensor, Reading, SensorPoller
 from PIL import Image, ImageDraw, ImageFont
 from arcade.types import LBWH
 from arcade.gl import BufferDescription
@@ -33,7 +33,7 @@ RED = (242, 49, 62)
 DEFAULT_THRESHOLD_PPB = 10
 DEFAULT_METER_CEILING_PPB = 60_000
 ROUND_SECONDS = 24.0
-READY_SECONDS = 10.0
+READY_SECONDS = 7.0
 STRONG_SNIFF_SECONDS = 15.0
 MAX_SNIFF_SECONDS = 5.0
 SMALL_SNIFF_FRAMES = (0, 1, 2, 1)
@@ -43,6 +43,7 @@ UNDERARM_FRAME_SEQUENCE = (0, 1, 2, 3, 2, 1)
 LETTERS_PATH = Path(__file__).resolve().parent / "assets" / "letter.png"
 NOSE_PATH = Path(__file__).resolve().parent / "assets" / "nose.png"
 UNDERARM_PATH = Path(__file__).resolve().parent / "assets" / "underarm_2.png"
+SHOWER_PATH = Path(__file__).resolve().parent / "assets" / "shower.png"
 LEADERBOARD_QR_PATH = Path(__file__).resolve().parent / \
     "assets" / "leaderboard-qr.png"
 FONT_PATH = Path(__file__).resolve().parent / "assets" / "hes-on-fire.ttf"
@@ -65,10 +66,17 @@ def bitmap_text(value: str, color: tuple[int, int, int], size: int) -> arcade.Te
         except OSError:
             font = ImageFont.load_default(size=font_size)
     left, top, right, bottom = font.getbbox(value)
-    mask = Image.new("L", (max(1, right - left), max(1, bottom - top)))
+    letter_spacing = 1 if 9 <= size <= 16 else 0
+    mask = Image.new("L", (max(1, right - left + letter_spacing * max(0, len(value) - 1)),
+                           max(1, bottom - top)))
     draw = ImageDraw.Draw(mask)
     draw.fontmode = "1"
-    draw.text((-left, -top), value, font=font, fill=255)
+    if letter_spacing:
+        for index, char in enumerate(value):
+            x = round(font.getlength(value[:index])) + index * letter_spacing
+            draw.text((x - left, -top), char, font=font, fill=255)
+    else:
+        draw.text((-left, -top), value, font=font, fill=255)
     image = Image.new("RGBA", mask.size, (*color, 0))
     image.putalpha(mask)
     return arcade.Texture(image, hash=f"smellcity-text:{size}:{color}:{value}")
@@ -175,6 +183,24 @@ def load_underarm_frames() -> list[arcade.Texture]:
             for index, (left, right) in enumerate(columns)]
 
 
+def load_shower_frames() -> list[arcade.Texture]:
+    image = Image.open(SHOWER_PATH).convert("RGBA")
+    alpha = image.getchannel("A")
+    columns = _runs([alpha.crop((x, 0, x + 1, image.height)).getbbox()
+                     is not None for x in range(image.width)])
+    columns = [(left, right) for left, right in columns if right - left > 8]
+    if len(columns) != 2:
+        raise ValueError(f"Expected 2 frames in {SHOWER_PATH}, found {len(columns)}")
+    width = max(right - left for left, right in columns)
+    frames = []
+    for index, (left, right) in enumerate(columns):
+        crop = image.crop((left, 0, right, image.height))
+        frame = Image.new("RGBA", (width, image.height))
+        frame.paste(crop, ((width - crop.width) // 2, 0))
+        frames.append(arcade.Texture(frame, hash=f"smellcity-shower-{index}"))
+    return frames
+
+
 def letter_keys():
     for row, letters in enumerate(("ABCDEFG", "HIJKLMN", "OPQRST", "UVWXYZ")):
         start_x = 252 if len(letters) == 7 else 267
@@ -264,6 +290,7 @@ class TVOCWindow(arcade.Window):
         self.letters = load_letters()
         self.nose_frames = load_nose_frames()
         self.underarm_frames = load_underarm_frames()
+        self.shower_frames = load_shower_frames()
         self.leaderboard_qr = arcade.Texture(
             Image.open(LEADERBOARD_QR_PATH).convert("RGBA"),
             hash="smellcity-leaderboard-qr")
@@ -431,13 +458,22 @@ class TVOCWindow(arcade.Window):
             95 - width / 2, 87, width, height), pixelated=True)
 
     def _draw_underarm(self) -> None:
-        elapsed = 0 if self.ready_started_monotonic is None else monotonic() - self.ready_started_monotonic
-        frame = UNDERARM_FRAME_SEQUENCE[int(elapsed * 6) % len(UNDERARM_FRAME_SEQUENCE)]
+        elapsed = 0 if self.ready_started_monotonic is None else monotonic() - \
+            self.ready_started_monotonic
+        frame = UNDERARM_FRAME_SEQUENCE[int(
+            elapsed * 6) % len(UNDERARM_FRAME_SEQUENCE)]
         texture = self.underarm_frames[frame]
         height = 225
         width = height * texture.width / texture.height
         arcade.draw_texture_rect(texture, LBWH(
             125 - width / 2, 20, width, height), pixelated=True)
+
+    def _draw_shower(self, center_x: int, bottom: int, height: int, alpha: int) -> None:
+        texture = self.shower_frames[int(monotonic() * 4) % len(self.shower_frames)]
+        width = height * texture.width / texture.height
+        arcade.draw_texture_rect(texture, LBWH(
+            center_x - width / 2, bottom, width, height),
+            alpha=alpha, pixelated=True)
 
     def _draw_initials(self) -> None:
         score = score_for(self.peak_tvoc, self.score_lower_bound_ppb)
@@ -446,7 +482,7 @@ class TVOCWindow(arcade.Window):
         arcade.draw_lrbt_rectangle_filled(20, 231, 230, 235, ORANGE)
         arcade.draw_lrbt_rectangle_filled(237, 241, 25, 245, PURPLE)
         self._text("ROUND COMPLETE", 32, 210, GOLD, 15)
-        self._text("YOUR SCORE", 32, 182, BLUE, 11)
+        self._text("YOUR SCORE", 32, 190, BLUE, 11)
         score_size = 43 if score < 10_000 else 32
         self._text(str(score), 30, 131, WHITE, score_size)
         self._text("PPB ABOVE START", 32, 117, MUTED, 9)
@@ -500,7 +536,7 @@ class TVOCWindow(arcade.Window):
         qr_size = self.leaderboard_qr.width * 3
         arcade.draw_texture_rect(self.leaderboard_qr, LBWH(
             397 - qr_size / 2, 83, qr_size, qr_size), pixelated=True)
-        self._text("ONLINE LEADERBOARD", 343, 55, BLUE, 9)
+        self._text("ONLINE LEADERBOARD", 334, 55, BLUE, 9)
         self._button(120, 360, 8, 45, ORANGE, GOLD)
         self._text("PLAY AGAIN", 171, 20, BACKGROUND, 16)
 
@@ -513,12 +549,13 @@ class TVOCWindow(arcade.Window):
         with self.canvas.camera.activate():
             self._chrome()
             if self.view_state == "start":
+                self._draw_shower(80, 90, 180, 60)
                 ready = self.poller.room_reference() is not None
-                self._text("ARCADE SMELL CHALLENGE", 152, 234, BLUE, 10)
-                self._text("SHOWERMASTER", 113, 197, RED, 29)
-                self._text("SHOWERMASTER", 111, 200, GOLD, 29)
-                self._text("ARE YOU THE MOST IN NEED OF A SHOWER?",
-                           89, 174, MUTED, 11)
+                self._text("SHOWERHACKS CHALLENGE", 152, 234, BLUE, 10)
+                self._text("SHOWERMASTER", 113, 186, RED, 29)
+                self._text("SHOWERMASTER", 111, 189, GOLD, 29)
+                self._text("TAKE THE CHALLENGE TO SEE HOW MUCH YOU NEED A SHOWER",
+                           26, 166, MUTED, 11)
                 self._button(80, 400, 75, 150,
                              ORANGE if ready else PANEL,
                              GOLD if ready else PANEL_LIGHT)
@@ -534,10 +571,11 @@ class TVOCWindow(arcade.Window):
                 self._draw_underarm()
                 arcade.draw_lrbt_rectangle_filled(237, 241, 25, 245, PURPLE)
                 self._text("GET READY!", 258, 205, GOLD, 24)
-                self._text("ROUND STARTS IN", 272, 172, BLUE, 12)
+                self._text("HOLD THE WAND UP TO THE", 270, 183, BLUE, 10)
+                self._text("FUNKIEST PART OF YOURSELF", 262, 167, BLUE, 10)
                 ready_seconds = ceil(self.ready_remaining_seconds())
-                self._text(str(ready_seconds), 300 if ready_seconds == 10 else 330,
-                           76, ORANGE if ready_seconds <= 3 else WHITE, 66)
+                self._text(str(ready_seconds), 330, 76,
+                           ORANGE if ready_seconds <= 3 else WHITE, 66)
                 self._text("SECONDS", 317, 56, MUTED, 12)
             elif self.view_state == "meter":
                 self._text("SMELL METER", 20, 238, GOLD, 14)
@@ -571,7 +609,8 @@ class TVOCWindow(arcade.Window):
                 self._line(180, 150, 458, 150, PANEL_LIGHT, 2)
                 self._text(f"SCORE  {round_score} PPB", 182, 128, GOLD, 12)
                 self._text(f"PEAK  {self.peak_tvoc} PPB", 182, 108, MUTED, 10)
-                current_score = score_for(current, self.score_lower_bound_ppb) if current_is_live else 0
+                current_score = score_for(
+                    current, self.score_lower_bound_ppb) if current_is_live else 0
                 filled = meter_segments(current_score, self.meter_ceiling_ppb)
                 for index in range(20):
                     left = 21 + index * 22
@@ -604,8 +643,10 @@ class TVOCWindow(arcade.Window):
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Display SGP30 TVOC readings in Arcade")
-    parser.add_argument("--port", required=True,
+    parser.add_argument("--port",
                         help="Pico USB serial port, such as /dev/ttyACM0")
+    parser.add_argument("--dev", action="store_true",
+                        help="Use simulated TVOC readings without a Pico")
     parser.add_argument("--windowed", action="store_true",
                         help="Preview in a window instead of full screen")
     parser.add_argument("--scale", type=int, default=1,
@@ -620,14 +661,17 @@ def main() -> None:
     parser.add_argument("--baseline-file", type=Path, default=Path(
         "sgp30_baselines.jsonl"), help="Sensor baseline log path")
     args = parser.parse_args()
+    if not args.dev and not args.port:
+        parser.error("--port is required unless --dev is used")
     if args.threshold < 0 or args.meter_ceiling <= 0:
         parser.error(
             "--threshold must be nonnegative and --meter-ceiling must be positive")
     if args.scale < 1 or (args.scale != 1 and not args.windowed):
-        parser.error("--scale must be a positive integer and requires --windowed")
+        parser.error(
+            "--scale must be a positive integer and requires --windowed")
 
-    poller = SensorPoller(lambda: PicoSensor(args.port),
-                          baseline_file=args.baseline_file)
+    poller = SensorPoller(DemoSensor if args.dev else lambda: PicoSensor(args.port),
+                          baseline_file=None if args.dev else args.baseline_file)
     window = TVOCWindow(
         poller,
         fullscreen=not args.windowed,
