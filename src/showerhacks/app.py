@@ -87,7 +87,7 @@ def bitmap_text(value: str, color: tuple[int, int, int], size: int,
             for x in range(image.width):
                 pixels[x, y] = (*row_color, 0)
     image.putalpha(mask)
-    return arcade.Texture(image, hash=f"smellcity-text:{size}:{color}:{gradient_to}:{value}")
+    return arcade.Texture(image, hash=f"showerhacks-text:{size}:{color}:{gradient_to}:{value}")
 
 
 def score_for(peak_tvoc: int, lower_bound_ppb: int) -> int:
@@ -154,7 +154,7 @@ def load_nose_frames() -> list[arcade.Texture]:
         raise ValueError(
             f"Expected 8 frames in {NOSE_PATH}, found {len(columns)}")
     return [arcade.Texture(image.crop((left, 0, right, image.height)),
-                           hash=f"smellcity-nose-{index}")
+                           hash=f"showerhacks-nose-{index}")
             for index, (left, right) in enumerate(columns)]
 
 
@@ -167,7 +167,7 @@ def load_underarm_frames() -> list[arcade.Texture]:
         raise ValueError(
             f"Expected 4 frames in {UNDERARM_PATH}, found {len(columns)}")
     return [arcade.Texture(image.crop((left, 0, right, image.height)),
-                           hash=f"smellcity-underarm-{index}")
+                           hash=f"showerhacks-underarm-{index}")
             for index, (left, right) in enumerate(columns)]
 
 
@@ -185,7 +185,7 @@ def load_shower_frames() -> list[arcade.Texture]:
         crop = image.crop((left, 0, right, image.height))
         frame = Image.new("RGBA", (width, image.height))
         frame.paste(crop, ((width - crop.width) // 2, 0))
-        frames.append(arcade.Texture(frame, hash=f"smellcity-shower-{index}"))
+        frames.append(arcade.Texture(frame, hash=f"showerhacks-shower-{index}"))
     return frames
 
 
@@ -260,7 +260,7 @@ class TVOCWindow(arcade.Window):
         window_scale: int = 1,
         threshold_ppb: int = DEFAULT_THRESHOLD_PPB,
         meter_ceiling_ppb: int = DEFAULT_METER_CEILING_PPB,
-        scores_file: Path = Path("smellcity_scores.csv"),
+        scores_file: Path = Path("showerhacks_scores.csv"),
     ) -> None:
         width = TARGET_WIDTH if fullscreen else CANVAS_WIDTH * window_scale
         height = TARGET_HEIGHT if fullscreen else CANVAS_HEIGHT * window_scale
@@ -280,7 +280,7 @@ class TVOCWindow(arcade.Window):
         self.shower_frames = load_shower_frames()
         self.leaderboard_qr = arcade.Texture(
             Image.open(LEADERBOARD_QR_PATH).convert("RGBA"),
-            hash="smellcity-leaderboard-qr")
+            hash="showerhacks-leaderboard-qr")
         self.view_state = "start"
         self.peak_tvoc = 0
         self.room_reference_ppb = 0
@@ -646,7 +646,7 @@ def main() -> None:
                         type=int, default=DEFAULT_METER_CEILING_PPB,
                         help="Score at full logarithmic meter (default: 60000 ppb)")
     parser.add_argument("--scores-file", type=Path,
-                        default=Path("smellcity_scores.csv"), help="Round CSV path")
+                        default=Path("showerhacks_scores.csv"), help="Round CSV path")
     parser.add_argument("--baseline-file", type=Path, default=Path(
         "sgp30_baselines.jsonl"), help="Sensor baseline log path")
     args = parser.parse_args()

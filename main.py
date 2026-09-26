@@ -1,4 +1,4 @@
-from smellcity import main
+from showerhacks import main
 
 
 if __name__ == "__main__":

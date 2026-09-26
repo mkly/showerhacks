@@ -1,6 +1,6 @@
 import unittest
 
-from smellcity.app import GOLD, ORANGE, bitmap_text, meter_segments, nose_frame_index, projected_rank
+from showerhacks.app import GOLD, ORANGE, bitmap_text, meter_segments, nose_frame_index, projected_rank
 
 
 class MeterTest(unittest.TestCase):

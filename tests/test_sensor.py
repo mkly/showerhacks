@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from smellcity.sensor import SensorPoller
+from showerhacks.sensor import SensorPoller
 
 
 class FakeSensor:
