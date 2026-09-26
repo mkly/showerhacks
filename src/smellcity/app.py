@@ -40,7 +40,6 @@ SMALL_SNIFF_FRAMES = (0, 1, 2, 1)
 STRONG_SNIFF_FRAMES = (2, 3, 2, 1)
 MAX_SNIFF_FRAMES = (4, 5, 6, 5)
 UNDERARM_FRAME_SEQUENCE = (0, 1, 2, 3, 2, 1)
-LETTERS_PATH = Path(__file__).resolve().parent / "assets" / "letter.png"
 NOSE_PATH = Path(__file__).resolve().parent / "assets" / "nose.png"
 UNDERARM_PATH = Path(__file__).resolve().parent / "assets" / "underarm_2.png"
 SHOWER_PATH = Path(__file__).resolve().parent / "assets" / "shower.png"
@@ -54,7 +53,8 @@ SCORE_FIELDS = (
 
 
 @lru_cache(maxsize=1024)
-def bitmap_text(value: str, color: tuple[int, int, int], size: int) -> arcade.Texture:
+def bitmap_text(value: str, color: tuple[int, int, int], size: int,
+                gradient_to: tuple[int, int, int] | None = None) -> arcade.Texture:
     """Rasterize UI text with hard pixels before enlarging the canvas."""
     arcade_size = size * 1.7 if size >= 9 else size
     font_size = round(arcade_size * 4 / 3)
@@ -78,8 +78,16 @@ def bitmap_text(value: str, color: tuple[int, int, int], size: int) -> arcade.Te
     else:
         draw.text((-left, -top), value, font=font, fill=255)
     image = Image.new("RGBA", mask.size, (*color, 0))
+    if gradient_to is not None:
+        pixels = image.load()
+        for y in range(image.height):
+            blend = y / max(1, image.height - 1)
+            row_color = tuple(round(start * (1 - blend) + end * blend)
+                              for start, end in zip(color, gradient_to))
+            for x in range(image.width):
+                pixels[x, y] = (*row_color, 0)
     image.putalpha(mask)
-    return arcade.Texture(image, hash=f"smellcity-text:{size}:{color}:{value}")
+    return arcade.Texture(image, hash=f"smellcity-text:{size}:{color}:{gradient_to}:{value}")
 
 
 def score_for(peak_tvoc: int, lower_bound_ppb: int) -> int:
@@ -135,26 +143,6 @@ def _runs(active: list[bool]) -> list[tuple[int, int]]:
             result.append((start, index))
             start = None
     return result
-
-
-def load_letters() -> dict[str, arcade.Texture]:
-    image = Image.open(LETTERS_PATH).convert("RGBA")
-    alpha = image.getchannel("A")
-    rows = _runs([alpha.crop((0, y, image.width, y + 1)).getbbox()
-                 is not None for y in range(image.height)])
-    bounds = []
-    for top, bottom in rows:
-        columns = _runs([alpha.crop((x, top, x + 1, bottom)).getbbox()
-                        is not None for x in range(image.width)])
-        bounds.extend((left, top, right, bottom) for left, right in columns)
-    if len(bounds) != 26:
-        raise ValueError(
-            f"Expected 26 glyphs in {LETTERS_PATH}, found {len(bounds)}")
-    return {
-        letter: arcade.Texture(image.crop(
-            box), hash=f"smellcity-letter-{letter}")
-        for letter, box in zip(string.ascii_uppercase, bounds)
-    }
 
 
 def load_nose_frames() -> list[arcade.Texture]:
@@ -287,7 +275,6 @@ class TVOCWindow(arcade.Window):
         self.scores = load_scores(scores_file)
         self.best_score = max((int(row["score_ppb"])
                               for row in self.scores), default=0)
-        self.letters = load_letters()
         self.nose_frames = load_nose_frames()
         self.underarm_frames = load_underarm_frames()
         self.shower_frames = load_shower_frames()
@@ -309,8 +296,9 @@ class TVOCWindow(arcade.Window):
         if hasattr(self, "canvas"):
             self.canvas.resize(width, height)
 
-    def _text(self, value: str, x: int, y: int, color: tuple[int, int, int], size: int) -> None:
-        texture = bitmap_text(value, color, size)
+    def _text(self, value: str, x: int, y: int, color: tuple[int, int, int], size: int,
+              gradient_to: tuple[int, int, int] | None = None) -> None:
+        texture = bitmap_text(value, color, size, gradient_to)
         arcade.draw_texture_rect(texture, LBWH(
             x, y, texture.width, texture.height), pixelated=True)
 
@@ -348,6 +336,7 @@ class TVOCWindow(arcade.Window):
                 room_reference = self.poller.room_reference()
                 if room_reference is None:
                     return
+                self.poller.set_room_sampling(False)
                 self.room_reference_ppb = room_reference
                 self.score_lower_bound_ppb = room_reference + self.threshold_ppb
                 self.session_start = None
@@ -370,6 +359,7 @@ class TVOCWindow(arcade.Window):
                         self.initials += letter
                         break
         elif self.view_state == "leaderboard" and 120 <= px < 360 and 8 <= py < 45:
+            self.poller.set_room_sampling(True)
             self.view_state = "start"
 
     def remaining_seconds(self) -> float:
@@ -445,10 +435,11 @@ class TVOCWindow(arcade.Window):
         self._text(f"0-{ceiling} PPB", 389, bottom - 17, MUTED, 7)
 
     def _draw_letter(self, letter: str, center_x: float, bottom: float, height: float) -> None:
-        texture = self.letters[letter]
-        width = height * texture.width / texture.height
+        texture = bitmap_text(letter, GOLD, 24 if height >= 29 else 15, ORANGE)
         arcade.draw_texture_rect(texture, LBWH(
-            center_x - width / 2, bottom, width, height), pixelated=True)
+            round(center_x - texture.width / 2),
+            round(bottom + (height - texture.height) / 2),
+            texture.width, texture.height), pixelated=True)
 
     def _draw_nose(self) -> None:
         texture = self.nose_frames[nose_frame_index(self.remaining_seconds())]
@@ -481,18 +472,16 @@ class TVOCWindow(arcade.Window):
         arcade.draw_lrbt_rectangle_filled(20, 231, 26, 235, PANEL)
         arcade.draw_lrbt_rectangle_filled(20, 231, 230, 235, ORANGE)
         arcade.draw_lrbt_rectangle_filled(237, 241, 25, 245, PURPLE)
-        self._text("ROUND COMPLETE", 32, 210, GOLD, 15)
+        self._text("ROUND COMPLETE", 32, 210, GOLD, 15, ORANGE)
         self._text("YOUR SCORE", 32, 190, BLUE, 11)
         score_size = 43 if score < 10_000 else 32
         self._text(str(score), 30, 131, WHITE, score_size)
-        self._text("PPB ABOVE START", 32, 117, MUTED, 9)
-        self._line(32, 108, 220, 108, PANEL_LIGHT, 2)
+        self._line(32, 117, 220, 117, PANEL_LIGHT, 2)
         self._text("YOUR RANK", 32, 90, BLUE, 11)
-        self._text(f"#{rank}", 30, 43, GOLD, 39)
+        self._text(f"#{rank}", 30, 43, GOLD, 39, ORANGE)
         self._text(f"OF {len(self.scores) + 1} TOTAL", 129, 54, MUTED, 10)
-        self._text(f"PEAK TVOC  {self.peak_tvoc} PPB", 32, 30, MUTED, 9)
 
-        self._text("ENTER INITIALS", 254, 236, GOLD, 15)
+        self._text("ENTER INITIALS", 254, 236, GOLD, 15, ORANGE)
         for index in range(3):
             left = 252 + index * 54
             self._button(left, left + 47, 190, 227, PANEL, BLUE)
@@ -513,7 +502,7 @@ class TVOCWindow(arcade.Window):
             self._draw_letter(letter, (left + right) / 2, bottom + 4, 19)
 
     def _draw_leaderboard(self) -> None:
-        self._text("LEADERBOARD", 113, 235, GOLD, 24)
+        self._text("LEADERBOARD", 113, 235, GOLD, 24, ORANGE)
         self._text("RANK", 27, 212, MUTED, 10)
         self._text("TAG", 87, 212, MUTED, 10)
         self._text("SCORE", 198, 212, MUTED, 10)
@@ -553,7 +542,7 @@ class TVOCWindow(arcade.Window):
                 ready = self.poller.room_reference() is not None
                 self._text("SHOWERHACKS CHALLENGE", 152, 234, BLUE, 10)
                 self._text("SHOWERMASTER", 113, 186, RED, 29)
-                self._text("SHOWERMASTER", 111, 189, GOLD, 29)
+                self._text("SHOWERMASTER", 111, 189, GOLD, 29, ORANGE)
                 self._text("TAKE THE CHALLENGE TO SEE HOW MUCH YOU NEED A SHOWER",
                            26, 166, MUTED, 11)
                 self._button(80, 400, 75, 150,
@@ -570,7 +559,7 @@ class TVOCWindow(arcade.Window):
                 arcade.draw_lrbt_rectangle_filled(20, 231, 239, 245, BLUE)
                 self._draw_underarm()
                 arcade.draw_lrbt_rectangle_filled(237, 241, 25, 245, PURPLE)
-                self._text("GET READY!", 258, 205, GOLD, 24)
+                self._text("GET READY!", 258, 205, GOLD, 24, ORANGE)
                 self._text("HOLD THE WAND UP TO THE", 270, 183, BLUE, 10)
                 self._text("FUNKIEST PART OF YOURSELF", 262, 167, BLUE, 10)
                 ready_seconds = ceil(self.ready_remaining_seconds())
@@ -578,7 +567,7 @@ class TVOCWindow(arcade.Window):
                            ORANGE if ready_seconds <= 3 else WHITE, 66)
                 self._text("SECONDS", 317, 56, MUTED, 12)
             elif self.view_state == "meter":
-                self._text("SMELL METER", 20, 238, GOLD, 14)
+                self._text("SMELL METER", 20, 238, GOLD, 14, ORANGE)
                 self._button(340, 467, 190, 255, PANEL, ORANGE)
                 remaining = self.remaining_seconds()
                 timer_color = ORANGE if remaining <= 5 and int(

@@ -89,6 +89,7 @@ class SensorPoller:
         self._baseline_interval = baseline_interval
         self._readings: deque[Reading] = deque(maxlen=50)
         self._minute_readings: deque[Reading] = deque(maxlen=60)
+        self._room_sampling_enabled = True
         self._lock = Lock()
         self._stop = Event()
         self._thread = Thread(target=self._poll, name="sgp30-poller", daemon=True)
@@ -105,6 +106,10 @@ class SensorPoller:
     def snapshot(self) -> tuple[list[Reading], str | None]:
         with self._lock:
             return list(self._readings), self._error
+
+    def set_room_sampling(self, enabled: bool) -> None:
+        with self._lock:
+            self._room_sampling_enabled = enabled
 
     def room_reference(self) -> int | None:
         """Use positive recent readings, or zero if valid readings are all zero."""
@@ -137,7 +142,8 @@ class SensorPoller:
                     )
                     with self._lock:
                         self._readings.append(reading)
-                        self._minute_readings.append(reading)
+                        if self._room_sampling_enabled:
+                            self._minute_readings.append(reading)
                         self._error = None
                     if self._baseline_file is not None and monotonic() >= next_baseline:
                         next_baseline = monotonic() + self._baseline_interval

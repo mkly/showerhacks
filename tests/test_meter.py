@@ -1,6 +1,6 @@
 import unittest
 
-from smellcity.app import GOLD, bitmap_text, meter_segments, nose_frame_index, projected_rank
+from smellcity.app import GOLD, ORANGE, bitmap_text, meter_segments, nose_frame_index, projected_rank
 
 
 class MeterTest(unittest.TestCase):
@@ -30,6 +30,12 @@ class MeterTest(unittest.TestCase):
     def test_ui_text_has_hard_pixel_edges(self) -> None:
         texture = bitmap_text("SHOWERMASTER", GOLD, 29)
         self.assertEqual(set(texture.image.getchannel("A").getdata()), {0, 255})
+
+    def test_gradient_text_keeps_hard_edges(self) -> None:
+        image = bitmap_text("SHOWERMASTER", GOLD, 29, ORANGE).image
+        self.assertEqual(set(image.getchannel("A").getdata()), {0, 255})
+        colors = {pixel[:3] for pixel in image.getdata() if pixel[3]}
+        self.assertGreater(len(colors), 2)
 
 
 if __name__ == "__main__":

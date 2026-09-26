@@ -48,15 +48,18 @@ open a 7-second **GET READY!** screen with the underarm animation. The
 round countdown shows tenths of a second and flashes
 orange during the last five seconds. The nose animation grows stronger at 15
 seconds remaining and reaches its largest sniff cycle at five seconds. The
-round ends automatically at zero. The game takes the median of readings from the preceding minute
-as the room reference. The score is the round's peak TVOC above that reference
+round ends automatically at zero. When START is tapped, the game takes the
+median of the preceding minute's room readings as a fixed reference. It
+excludes readings taken during GET READY and the active round from future room
+references, then resumes room sampling on the title screen. The score is the
+round's peak TVOC above that reference
 plus 10 ppb. For example, a room at 230 ppb starts scoring above 240 ppb. The
 meter uses a logarithmic scale, so a 500 ppb increase and a 1,000 ppb increase
 produce different fills. The default ceiling is 60,000 ppb, the SGP30's maximum
 TVOC output.
 
 After the timer ends, the split screen shows your score and projected rank.
-Enter three initials using the letter art in `assets/letter.png` and tap
+Enter three initials using the on-screen gradient letters and tap
 **SAVE SCORE**. The leaderboard shows the five highest scores and a QR code
 for <https://showerhacks.mkly.workers.dev>. Completed rounds are saved in `smellcity_scores.csv` in the current
 directory. You can tune the deadband and log scale ceiling with `--threshold`

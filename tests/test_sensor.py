@@ -26,6 +26,26 @@ class FakeSensor:
 
 
 class SensorPollerTest(unittest.TestCase):
+    def test_round_readings_do_not_change_room_reference(self) -> None:
+        sensor = FakeSensor()
+        poller = SensorPoller(lambda: sensor, interval=0.001)
+        poller.start()
+        deadline = time.monotonic() + 2
+        while sensor.calls < 3 and time.monotonic() < deadline:
+            time.sleep(0.005)
+        poller.set_room_sampling(False)
+        frozen_reference = poller.room_reference()
+        paused_at = sensor.calls
+        while sensor.calls < paused_at + 5 and time.monotonic() < deadline:
+            time.sleep(0.005)
+        self.assertGreaterEqual(sensor.calls, paused_at + 5)
+        self.assertEqual(poller.room_reference(), frozen_reference)
+        poller.set_room_sampling(True)
+        while poller.room_reference() == frozen_reference and time.monotonic() < deadline:
+            time.sleep(0.005)
+        poller.stop()
+        self.assertGreater(poller.room_reference(), frozen_reference)
+
     def test_zero_tvoc_is_a_valid_ready_reading(self) -> None:
         sensor = FakeSensor()
         sensor.iaq_measure = lambda: (400, 0)
