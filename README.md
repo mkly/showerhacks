@@ -39,7 +39,9 @@ window. Scaling always uses whole pixels and nearest
 neighbor filtering.
 
 The START button becomes active once a positive TVOC reading arrives. Tap it to
-begin a 24-second round. The countdown shows tenths of a second and flashes
+open a 10-second **GET READY!** screen with the underarm animation. The
+24-second smell round and peak recording begin when that countdown ends. The
+round countdown shows tenths of a second and flashes
 orange during the last five seconds. The nose animation grows stronger at 15
 seconds remaining and reaches its largest sniff cycle at five seconds. The
 round ends automatically at zero. The game takes the median of readings from the preceding minute
@@ -58,7 +60,8 @@ and `--meter-ceiling`, or change the CSV path with `--scores-file`.
 
 The game text uses [He's On Fire](https://fontstruct.com/fontstructions/show/748820)
 by Jamie, licensed under [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).
-The font's license and readme are included alongside the bundled font.
+The font is rasterized with hard pixel edges before the canvas is scaled. The
+font's license and readme are included alongside the bundled font.
 
 Every minute, the desktop app also requests the sensor's two IAQ baseline words
 and appends a JSON object to `sgp30_baselines.jsonl` with the timestamp, latest

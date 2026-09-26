@@ -1,7 +1,7 @@
 """Pixel-scaled Arcade dashboard for the latest TVOC and 50-reading trend."""
 
 from .sensor import PicoSensor, Reading, SensorPoller
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from arcade.types import LBWH
 from arcade.gl import BufferDescription
 import arcade
@@ -10,6 +10,7 @@ from pathlib import Path
 from math import ceil, log1p
 from datetime import datetime
 from array import array
+from functools import lru_cache
 import string
 import csv
 import argparse
@@ -32,21 +33,45 @@ RED = (242, 49, 62)
 DEFAULT_THRESHOLD_PPB = 10
 DEFAULT_METER_CEILING_PPB = 60_000
 ROUND_SECONDS = 24.0
+READY_SECONDS = 10.0
 STRONG_SNIFF_SECONDS = 15.0
 MAX_SNIFF_SECONDS = 5.0
 SMALL_SNIFF_FRAMES = (0, 1, 2, 1)
 STRONG_SNIFF_FRAMES = (2, 3, 2, 1)
 MAX_SNIFF_FRAMES = (4, 5, 6, 5)
+UNDERARM_FRAME_SEQUENCE = (0, 1, 2, 3, 2, 1)
 LETTERS_PATH = Path(__file__).resolve().parent / "assets" / "letter.png"
 NOSE_PATH = Path(__file__).resolve().parent / "assets" / "nose.png"
+UNDERARM_PATH = Path(__file__).resolve().parent / "assets" / "underarm_2.png"
 LEADERBOARD_QR_PATH = Path(__file__).resolve().parent / \
     "assets" / "leaderboard-qr.png"
 FONT_PATH = Path(__file__).resolve().parent / "assets" / "hes-on-fire.ttf"
-FONT_NAME = "He's On Fire"
 SCORE_FIELDS = (
     "initials", "started_at", "ended_at", "room_reference_ppb", "threshold_ppb",
     "score_lower_bound_ppb", "peak_tvoc_ppb", "score_ppb",
 )
+
+
+@lru_cache(maxsize=1024)
+def bitmap_text(value: str, color: tuple[int, int, int], size: int) -> arcade.Texture:
+    """Rasterize UI text with hard pixels before enlarging the canvas."""
+    arcade_size = size * 1.7 if size >= 9 else size
+    font_size = round(arcade_size * 4 / 3)
+    if size >= 9:
+        font = ImageFont.truetype(FONT_PATH, font_size)
+    else:
+        try:
+            font = ImageFont.truetype("LiberationSans-Regular.ttf", font_size)
+        except OSError:
+            font = ImageFont.load_default(size=font_size)
+    left, top, right, bottom = font.getbbox(value)
+    mask = Image.new("L", (max(1, right - left), max(1, bottom - top)))
+    draw = ImageDraw.Draw(mask)
+    draw.fontmode = "1"
+    draw.text((-left, -top), value, font=font, fill=255)
+    image = Image.new("RGBA", mask.size, (*color, 0))
+    image.putalpha(mask)
+    return arcade.Texture(image, hash=f"smellcity-text:{size}:{color}:{value}")
 
 
 def score_for(peak_tvoc: int, lower_bound_ppb: int) -> int:
@@ -137,6 +162,19 @@ def load_nose_frames() -> list[arcade.Texture]:
             for index, (left, right) in enumerate(columns)]
 
 
+def load_underarm_frames() -> list[arcade.Texture]:
+    image = Image.open(UNDERARM_PATH).convert("RGBA")
+    alpha = image.getchannel("A")
+    columns = _runs([alpha.crop((x, 0, x + 1, image.height)).getbbox()
+                     is not None for x in range(image.width)])
+    if len(columns) != 4:
+        raise ValueError(
+            f"Expected 4 frames in {UNDERARM_PATH}, found {len(columns)}")
+    return [arcade.Texture(image.crop((left, 0, right, image.height)),
+                           hash=f"smellcity-underarm-{index}")
+            for index, (left, right) in enumerate(columns)]
+
+
 def letter_keys():
     for row, letters in enumerate(("ABCDEFG", "HIJKLMN", "OPQRST", "UVWXYZ")):
         start_x = 252 if len(letters) == 7 else 267
@@ -223,9 +261,9 @@ class TVOCWindow(arcade.Window):
         self.scores = load_scores(scores_file)
         self.best_score = max((int(row["score_ppb"])
                               for row in self.scores), default=0)
-        arcade.load_font(FONT_PATH)
         self.letters = load_letters()
         self.nose_frames = load_nose_frames()
+        self.underarm_frames = load_underarm_frames()
         self.leaderboard_qr = arcade.Texture(
             Image.open(LEADERBOARD_QR_PATH).convert("RGBA"),
             hash="smellcity-leaderboard-qr")
@@ -235,6 +273,7 @@ class TVOCWindow(arcade.Window):
         self.score_lower_bound_ppb = 0
         self.session_start: datetime | None = None
         self.session_end: datetime | None = None
+        self.ready_started_monotonic: float | None = None
         self.round_started_monotonic: float | None = None
         self.initials = ""
 
@@ -244,8 +283,9 @@ class TVOCWindow(arcade.Window):
             self.canvas.resize(width, height)
 
     def _text(self, value: str, x: int, y: int, color: tuple[int, int, int], size: int) -> None:
-        arcade.draw_text(value, x, y, color, round(size * 1.7) if size >= 9 else size,
-                         font_name=FONT_NAME if size >= 9 else ("calibri", "arial"))
+        texture = bitmap_text(value, color, size)
+        arcade.draw_texture_rect(texture, LBWH(
+            x, y, texture.width, texture.height), pixelated=True)
 
     def _line(self, x1: float, y1: float, x2: float, y2: float, color: tuple[int, int, int], width: int = 1) -> None:
         arcade.draw_line(x1, y1, x2, y2, color, width)
@@ -281,14 +321,14 @@ class TVOCWindow(arcade.Window):
                 room_reference = self.poller.room_reference()
                 if room_reference is None:
                     return
-                readings, _ = self.poller.snapshot()
                 self.room_reference_ppb = room_reference
                 self.score_lower_bound_ppb = room_reference + self.threshold_ppb
-                self.session_start = readings[-1].taken_at if readings else datetime.now(
-                ).astimezone()
-                self.peak_tvoc = readings[-1].tvoc_ppb if readings else 0
-                self.round_started_monotonic = monotonic()
-                self.view_state = "meter"
+                self.session_start = None
+                self.session_end = None
+                self.peak_tvoc = 0
+                self.round_started_monotonic = None
+                self.ready_started_monotonic = monotonic()
+                self.view_state = "ready"
             elif 140 <= px < 340 and 8 <= py < 45:
                 self.view_state = "leaderboard"
         elif self.view_state == "initials":
@@ -310,19 +350,27 @@ class TVOCWindow(arcade.Window):
             return ROUND_SECONDS
         return max(0.0, ROUND_SECONDS - (monotonic() - self.round_started_monotonic))
 
+    def ready_remaining_seconds(self) -> float:
+        if self.ready_started_monotonic is None:
+            return READY_SECONDS
+        return max(0.0, READY_SECONDS - (monotonic() - self.ready_started_monotonic))
+
     def countdown_display(self) -> str:
         return f"{ceil(self.remaining_seconds() * 10) / 10:.1f}"
 
     def on_update(self, delta_time: float) -> None:
-        if self.view_state == "meter" and self.remaining_seconds() <= 0:
+        if self.view_state == "ready" and self.ready_remaining_seconds() <= 0:
+            self.session_start = datetime.now().astimezone()
+            self.round_started_monotonic = monotonic()
+            self.view_state = "meter"
+        elif self.view_state == "meter" and self.remaining_seconds() <= 0:
             self.finish_round()
 
     def _update_peak(self, readings: list) -> None:
         if self.view_state == "meter" and self.session_start is not None:
             self.peak_tvoc = max(
-                self.peak_tvoc,
-                *(item.tvoc_ppb for item in readings if item.taken_at >=
-                  self.session_start),
+                [self.peak_tvoc] +
+                [item.tvoc_ppb for item in readings if item.taken_at >= self.session_start]
             )
 
     def finish_round(self) -> None:
@@ -381,6 +429,15 @@ class TVOCWindow(arcade.Window):
         width = height * texture.width / texture.height
         arcade.draw_texture_rect(texture, LBWH(
             95 - width / 2, 87, width, height), pixelated=True)
+
+    def _draw_underarm(self) -> None:
+        elapsed = 0 if self.ready_started_monotonic is None else monotonic() - self.ready_started_monotonic
+        frame = UNDERARM_FRAME_SEQUENCE[int(elapsed * 6) % len(UNDERARM_FRAME_SEQUENCE)]
+        texture = self.underarm_frames[frame]
+        height = 225
+        width = height * texture.width / texture.height
+        arcade.draw_texture_rect(texture, LBWH(
+            125 - width / 2, 20, width, height), pixelated=True)
 
     def _draw_initials(self) -> None:
         score = score_for(self.peak_tvoc, self.score_lower_bound_ppb)
@@ -471,6 +528,17 @@ class TVOCWindow(arcade.Window):
                     f"BEST SCORE  {self.best_score} PPB", 164, 57, GOLD, 10)
                 self._button(140, 340, 8, 45, PANEL, BLUE)
                 self._text("LEADERBOARD", 184, 20, WHITE, 12)
+            elif self.view_state == "ready":
+                arcade.draw_lrbt_rectangle_filled(20, 231, 26, 245, PANEL)
+                arcade.draw_lrbt_rectangle_filled(20, 231, 239, 245, BLUE)
+                self._draw_underarm()
+                arcade.draw_lrbt_rectangle_filled(237, 241, 25, 245, PURPLE)
+                self._text("GET READY!", 258, 205, GOLD, 24)
+                self._text("ROUND STARTS IN", 272, 172, BLUE, 12)
+                ready_seconds = ceil(self.ready_remaining_seconds())
+                self._text(str(ready_seconds), 300 if ready_seconds == 10 else 330,
+                           76, ORANGE if ready_seconds <= 3 else WHITE, 66)
+                self._text("SECONDS", 317, 56, MUTED, 12)
             elif self.view_state == "meter":
                 self._text("SMELL METER", 20, 238, GOLD, 14)
                 self._button(340, 467, 190, 255, PANEL, ORANGE)
@@ -489,11 +557,13 @@ class TVOCWindow(arcade.Window):
                 if readings:
                     latest = readings[-1]
                     current = latest.tvoc_ppb
+                    current_is_live = self.session_start is not None and latest.taken_at >= self.session_start
                     size = 42 if current < 1000 else 32 if current < 10_000 else 24
                     self._text(str(current), 182, 174, WHITE, size)
                     self._text("PPB TVOC", 184, 159, BLUE, 10)
                 else:
                     current = 0
+                    current_is_live = False
                     self._text("WAITING", 184, 185, WHITE, 15)
                     self._text("FOR SENSOR", 184, 166, WHITE, 15)
                 round_score = score_for(
@@ -501,7 +571,7 @@ class TVOCWindow(arcade.Window):
                 self._line(180, 150, 458, 150, PANEL_LIGHT, 2)
                 self._text(f"SCORE  {round_score} PPB", 182, 128, GOLD, 12)
                 self._text(f"PEAK  {self.peak_tvoc} PPB", 182, 108, MUTED, 10)
-                current_score = score_for(current, self.score_lower_bound_ppb)
+                current_score = score_for(current, self.score_lower_bound_ppb) if current_is_live else 0
                 filled = meter_segments(current_score, self.meter_ceiling_ppb)
                 for index in range(20):
                     left = 21 + index * 22

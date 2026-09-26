@@ -1,6 +1,6 @@
 import unittest
 
-from smellcity.app import meter_segments, nose_frame_index, projected_rank
+from smellcity.app import GOLD, bitmap_text, meter_segments, nose_frame_index, projected_rank
 
 
 class MeterTest(unittest.TestCase):
@@ -26,6 +26,10 @@ class MeterTest(unittest.TestCase):
         self.assertEqual(nose_frame_index(5.0), 4)
         self.assertIn(5, {nose_frame_index(5 - tick / 10)
                           for tick in range(50)})
+
+    def test_ui_text_has_hard_pixel_edges(self) -> None:
+        texture = bitmap_text("SHOWERMASTER", GOLD, 29)
+        self.assertEqual(set(texture.image.getchannel("A").getdata()), {0, 255})
 
 
 if __name__ == "__main__":
