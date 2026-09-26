@@ -51,11 +51,13 @@ seconds remaining and reaches its largest sniff cycle at five seconds. The
 round ends automatically at zero. When START is tapped, the game takes the
 median of the preceding minute's room readings as a fixed reference. It
 excludes readings taken during GET READY and the active round from future room
-references, then resumes room sampling on the title screen. The score is the
-round's peak TVOC above that reference
-plus 10 ppb. For example, a room at 230 ppb starts scoring above 240 ppb. The
-meter uses a logarithmic scale, so a 500 ppb increase and a 1,000 ppb increase
-produce different fills. The default ceiling is 60,000 ppb, the SGP30's maximum
+references, then resumes room sampling on the title screen. A round's start line
+is the room reference plus 10 ppb. For example, a room at 230 ppb sets the
+start line at 240 ppb. The increase above that line becomes a logarithmic
+score from 1 to 100, using a fixed 2,000 ppb increase as the top of the scale
+so scores stay comparable across rounds. The meter uses a logarithmic scale, so a 500 ppb increase and a
+1,000 ppb increase produce different fills. Its bar rises from empty to the live reading over the
+first five seconds of each round. The default ceiling is 60,000 ppb, the SGP30's maximum
 TVOC output.
 
 After the timer ends, the split screen shows your score and projected rank.
@@ -63,7 +65,19 @@ Enter three initials using the on-screen gradient letters and tap
 **SAVE SCORE**. The leaderboard shows the five highest scores and a QR code
 for <https://showerhacks.mkly.workers.dev>. Completed rounds are saved in `showerhacks_scores.csv` in the current
 directory. You can tune the deadband and log scale ceiling with `--threshold`
-and `--meter-ceiling`, or change the CSV path with `--scores-file`.
+and `--meter-ceiling`, or change the CSV path with `--scores-file`. The CSV's
+`score` column contains the normalized value; raw TVOC measurements remain in
+the other columns. `web/index.html` reads the public CSV and refreshes every
+15 seconds.
+
+To publish the scores for the website, set `SHOWERHACKS_S3_BUCKET` to an S3
+bucket name and provide AWS credentials through the normal AWS credential chain.
+After each local score save, a background worker uploads the complete CSV as
+`public/showerhacks_scores.csv` with a CSV content type. Upload failures are
+written to stderr; the local CSV remains the source of truth. Dev mode never
+uploads, even when the environment variable is set. The production bucket is
+`showerhacks-public-795385723395`, and the browser URL is
+<https://showerhacks-public-795385723395.s3.us-west-2.amazonaws.com/public/showerhacks_scores.csv>.
 
 The game text uses [He's On Fire](https://fontstruct.com/fontstructions/show/748820)
 by Jamie, licensed under [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).

@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#08091c">
+  <meta name="description" content="The official ShowerMaster leaderboard. Five spots. Maximum funk. A smell challenge by ShowerHacks.">
+  <title>ShowerMaster — ShowerHacks</title>
+  <style>
+    @font-face {
+      font-family: "Hes On Fire";
+      src: url("assets/hes-on-fire.ttf") format("truetype");
+      font-display: swap;
+    }
+    :root {
+      color-scheme: dark;
+      --background: #080c20;
+      --panel: #101831;
+      --white: #fff7df;
+      --muted: #9aaac9;
+      --blue: #5edcf4;
+      --orange: #ff762f;
+      --gold: #ffdb59;
+      --silver: #cedbf2;
+      --bronze: #e9a77f;
+      font-family: "Hes On Fire", monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(ellipse at 50% 10%, #1b2850 0, transparent 60%), var(--background);
+      color: var(--white);
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: .12;
+      background-image: linear-gradient(#738ab8 1px, transparent 1px), linear-gradient(90deg, #738ab8 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: linear-gradient(#000, transparent 85%);
+    }
+    .stripe {
+      height: 8px;
+      background: repeating-linear-gradient(120deg, var(--orange) 0 14px, var(--background) 14px 28px);
+    }
+    main { position: relative; width: min(1000px, calc(100% - 48px)); margin: auto; }
+    .masthead {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 25px 0;
+      border-bottom: 1px solid #33415c;
+      color: var(--muted);
+      font: 11px/1.5 ui-monospace, monospace;
+      letter-spacing: .14em;
+    }
+    .brand { color: var(--white); }
+    .brand::before { content: "✦"; color: var(--blue); margin-right: 10px; }
+    .hero { position: relative; padding: 47px 0 38px; text-align: center; }
+    .eyebrow { color: var(--blue); font-size: 23px; letter-spacing: .14em; margin: 0 0 14px; }
+    h1 { margin: 0; font-size: clamp(72px, 13vw, 148px); font-weight: normal; line-height: 1.05; }
+    h1 span {
+      background: linear-gradient(#fff0a0 15%, #ffd148 45%, #ff7d2f 80%);
+      background-clip: text;
+      color: transparent;
+      filter: drop-shadow(0 5px 0 #9a3834) drop-shadow(0 5px 0 #060a1b);
+    }
+    .intro { margin: 24px 0 0; color: var(--muted); font: 13px/1.7 ui-monospace, monospace; }
+    .hero-rule { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 23px; color: var(--orange); font-size: 16px; letter-spacing: .15em; }
+    .hero-rule::before, .hero-rule::after { content: ""; width: 58px; height: 2px; background: #7c4b38; }
+    .shower { position: absolute; top: 40px; width: 104px; height: 117px; background: url("assets/shower.png") 0 0 / 208px 117px; image-rendering: pixelated; opacity: .8; }
+    .shower.left { left: -8px; transform: rotate(-12deg); }
+    .shower.right { right: -8px; transform: scaleX(-1) rotate(-12deg); }
+    .board { border: 1px solid #3b4a6a; background: var(--panel); box-shadow: 0 8px 0 #040818, 0 9px 0 #273553; }
+    .board-title { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 23px 28px; border-bottom: 1px solid #3b4a6a; }
+    h2 { margin: 0; font-size: 29px; font-weight: normal; letter-spacing: .045em; }
+    .feed-label { display: flex; align-items: center; gap: 8px; color: var(--muted); font: 10px/1.5 ui-monospace, monospace; letter-spacing: .08em; }
+    .feed-dot { width: 6px; height: 6px; background: var(--muted); }
+    .board[data-feed="live"] .feed-dot { background: #8ae5b5; box-shadow: 0 0 10px #8ae5b555; }
+    .board[data-feed="offline"] .feed-dot { background: var(--orange); }
+    .board-heading, .score-row { display: grid; grid-template-columns: 100px 1fr 160px; align-items: center; gap: 16px; }
+    .board-heading { padding: 17px 28px 13px; color: var(--muted); font: 10px/1.5 ui-monospace, monospace; letter-spacing: .14em; }
+    .board-heading span:last-child { text-align: right; }
+    #scores { padding: 0 12px 12px; }
+    .score-row { min-height: 76px; padding: 8px 16px; border-top: 1px solid #26324d; font-size: 38px; }
+    .score-row.gold { min-height: 88px; border: 1px solid #8b7540; background: linear-gradient(90deg, #393126, #222331); }
+    .rank { color: #7d90b4; font-size: 29px; }
+    .rank::before { content: "#"; opacity: .5; margin-right: 4px; font-size: 20px; }
+    .gold .rank, .gold .score { color: var(--gold); }
+    .silver .rank { color: var(--silver); }
+    .bronze .rank { color: var(--bronze); }
+    .tag { letter-spacing: .12em; }
+    .score { text-align: right; color: var(--white); font-variant-numeric: tabular-nums; }
+    .empty { min-height: 230px; display: grid; place-content: center; gap: 14px; text-align: center; font-size: 28px; color: var(--white); }
+    .empty small { color: var(--muted); font: 12px/1.7 ui-monospace, monospace; }
+    .board-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; border-top: 1px solid #2b3752; padding: 15px 28px; color: var(--muted); font: 10px/1.5 ui-monospace, monospace; }
+    .made-in-sf { padding: 30px 0; border-bottom: 1px solid #33415c; text-align: center; font: 14px/1.7 ui-monospace, monospace; }
+    .made-in-sf a { color: var(--muted); text-decoration: none; }
+    .made-in-sf .heart { color: var(--orange); font-size: 18px; }
+    footer { display: flex; justify-content: center; flex-wrap: wrap; gap: 12px; padding: 22px 0 30px; color: #8a9ab9; font: 10px/1.6 ui-monospace, monospace; }
+    footer p { margin: 0; }
+    footer a { color: inherit; text-underline-offset: 3px; }
+    a:hover { color: var(--blue); }
+    a:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; }
+    @media (max-width: 720px) {
+      .shower { display: none; }
+      .hero { padding: 38px 0 30px; }
+      .eyebrow { font-size: 19px; }
+      h1 { font-size: 18vw; }
+    }
+    @media (max-width: 480px) {
+      main { width: calc(100% - 28px); }
+      .masthead { font-size: 9px; padding: 18px 0; letter-spacing: .06em; }
+      .intro { font-size: 11px; margin-top: 18px; }
+      .hero-rule { font-size: 14px; }
+      .board-title { padding: 19px 16px; gap: 8px; }
+      h2 { font-size: 25px; }
+      .feed-label { font-size: 8px; }
+      .board-heading, .score-row { grid-template-columns: 48px 1fr 98px; gap: 8px; }
+      .board-heading { padding-inline: 20px; font-size: 9px; }
+      #scores { padding: 0 7px 7px; }
+      .score-row { padding-inline: 12px; font-size: 32px; min-height: 70px; }
+      .score-row.gold { min-height: 82px; }
+      .rank { font-size: 25px; }
+      .board-footer { padding: 14px 16px; font-size: 9px; }
+      .made-in-sf { padding: 27px 0 22px; font-size: 12px; }
+      footer { font-size: 9px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="stripe" aria-hidden="true"></div>
+  <main>
+    <div class="masthead"><span class="brand">THE SMELL CHALLENGE</span><span>OFFICIAL HIGH SCORES</span></div>
+    <header class="hero">
+      <div class="shower left" aria-hidden="true"></div>
+      <div class="shower right" aria-hidden="true"></div>
+      <p class="eyebrow">SHOWERHACKS PRESENTS</p>
+      <h1><span>SHOWERMASTER</span></h1>
+      <p class="intro">Take the challenge to see how much you need a shower.</p>
+      <div class="hero-rule">WHO NEEDS A SHOWER?</div>
+    </header>
+    <section class="board" aria-labelledby="board-title" data-feed="loading">
+      <div class="board-title">
+        <h2 id="board-title">THE LEADERBOARD</h2>
+        <span class="feed-label"><span class="feed-dot" aria-hidden="true"></span><span id="feed-label">CONNECTING</span></span>
+      </div>
+      <div class="board-heading" aria-hidden="true"><span>RANK</span><span>PLAYER</span><span>FUNK SCORE</span></div>
+      <div id="scores" aria-live="polite"><div class="empty">LOADING SCORES...<small>Finding the funkiest of them all.</small></div></div>
+      <div class="board-footer"><span id="status" role="status">CONNECTING TO SCORE FEED</span><span id="updated">REFRESHES EVERY 15 SECONDS</span></div>
+    </section>
+    <aside class="made-in-sf"><a href="https://mkly.io" aria-label="Made with love in SF">Made with <span class="heart" aria-hidden="true">♥</span> in SF</a></aside>
+    <footer>
+      <p>Font: <a href="https://fontstruct.com/fontstructions/show/748820">He's On Fire by Jamie</a> · <a href="https://creativecommons.org/licenses/by-sa/3.0/">CC BY-SA 3.0</a></p>
+    </footer>
+  </main>
+
+  <script>
+    const SCORES_URL = "https://showerhacks-public-795385723395.s3.us-west-2.amazonaws.com/public/showerhacks_scores.csv";
+    const scoresElement = document.querySelector("#scores");
+    const statusElement = document.querySelector("#status");
+    const updatedElement = document.querySelector("#updated");
+    const feedLabel = document.querySelector("#feed-label");
+    const boardElement = document.querySelector(".board");
+    let hasLoaded = false;
+    const numberFormat = new Intl.NumberFormat();
+
+    function parseCsv(text) {
+      const rows = [];
+      let row = [];
+      let field = "";
+      let quoted = false;
+      for (let index = 0; index < text.length; index++) {
+        const char = text[index];
+        if (char === '"') {
+          if (quoted && text[index + 1] === '"') {
+            field += '"';
+            index++;
+          } else {
+            quoted = !quoted;
+          }
+        } else if (char === "," && !quoted) {
+          row.push(field);
+          field = "";
+        } else if ((char === "\n" || char === "\r") && !quoted) {
+          if (char === "\r" && text[index + 1] === "\n") index++;
+          row.push(field);
+          if (row.some(value => value !== "")) rows.push(row);
+          row = [];
+          field = "";
+        } else {
+          field += char;
+        }
+      }
+      if (field !== "" || row.length) {
+        row.push(field);
+        rows.push(row);
+      }
+      const [headers = [], ...values] = rows;
+      return values.map(cells => Object.fromEntries(headers.map((name, index) => [name, cells[index] ?? ""])));
+    }
+
+    function showScores(rows) {
+      const best = rows
+        .filter(row => Number.isFinite(Number(row.score)) && row.score !== "")
+        .sort((left, right) => Number(right.score) - Number(left.score))
+        .slice(0, 5);
+      scoresElement.replaceChildren();
+      if (!best.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "THE THRONE IS OPEN";
+        const hint = document.createElement("small");
+        hint.textContent = "Play a round and be the first on the board.";
+        empty.append(hint);
+        scoresElement.append(empty);
+        return;
+      }
+      best.forEach((row, index) => {
+        const item = document.createElement("div");
+        item.className = `score-row ${["gold", "silver", "bronze"][index] ?? "other"}`;
+        for (const [className, value] of [
+          ["rank", String(index + 1)],
+          ["tag", (row.initials || "---").slice(0, 3).toUpperCase()],
+          ["score", numberFormat.format(Number(row.score))],
+        ]) {
+          const span = document.createElement("span");
+          span.className = className;
+          span.textContent = value;
+          item.append(span);
+        }
+        scoresElement.append(item);
+      });
+    }
+
+    async function refreshScores() {
+      try {
+        const response = await fetch(SCORES_URL, { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const rows = parseCsv(await response.text());
+        showScores(rows);
+        hasLoaded = true;
+        boardElement.dataset.feed = "live";
+        feedLabel.textContent = "LIVE · EVERY 15 SEC";
+        statusElement.textContent = `${rows.length} TOTAL SCORE${rows.length === 1 ? "" : "S"}`;
+        updatedElement.textContent = `UPDATED ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+      } catch (error) {
+        boardElement.dataset.feed = "offline";
+        feedLabel.textContent = "RECONNECTING";
+        statusElement.textContent = "SCORE FEED OFFLINE · RETRYING";
+        if (!hasLoaded) {
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = "SCORES ON A BREAK";
+          const hint = document.createElement("small");
+          hint.textContent = "We’ll try again in a few seconds.";
+          empty.append(hint);
+          scoresElement.replaceChildren(empty);
+        }
+        console.error("Could not load ShowerHacks scores", error);
+      }
+    }
+
+    refreshScores();
+    setInterval(refreshScores, 15_000);
+  </script>
+</body>
+</html>

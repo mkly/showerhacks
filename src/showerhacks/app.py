@@ -1,6 +1,7 @@
 """Pixel-scaled Arcade dashboard for the latest TVOC and 50-reading trend."""
 
 from .sensor import DemoSensor, PicoSensor, Reading, SensorPoller
+from .score_upload import upload_scores
 from PIL import Image, ImageDraw, ImageFont
 from arcade.types import LBWH
 from arcade.gl import BufferDescription
@@ -11,9 +12,12 @@ from math import ceil, log1p
 from datetime import datetime
 from array import array
 from functools import lru_cache
+from concurrent.futures import Future, ThreadPoolExecutor
 import string
 import csv
 import argparse
+import os
+import sys
 TARGET_WIDTH = 1920
 TARGET_HEIGHT = 1080
 CANVAS_WIDTH = 480
@@ -32,6 +36,8 @@ BRONZE = (205, 123, 73)
 RED = (242, 49, 62)
 DEFAULT_THRESHOLD_PPB = 10
 DEFAULT_METER_CEILING_PPB = 60_000
+SCORE_CEILING_PPB = 2_000
+METER_RISE_SECONDS = 5.0
 ROUND_SECONDS = 24.0
 READY_SECONDS = 7.0
 STRONG_SNIFF_SECONDS = 15.0
@@ -48,7 +54,7 @@ LEADERBOARD_QR_PATH = Path(__file__).resolve().parent / \
 FONT_PATH = Path(__file__).resolve().parent / "assets" / "hes-on-fire.ttf"
 SCORE_FIELDS = (
     "initials", "started_at", "ended_at", "room_reference_ppb", "threshold_ppb",
-    "score_lower_bound_ppb", "peak_tvoc_ppb", "score_ppb",
+    "score_lower_bound_ppb", "peak_tvoc_ppb", "score",
 )
 
 
@@ -91,19 +97,40 @@ def bitmap_text(value: str, color: tuple[int, int, int], size: int,
 
 
 def score_for(peak_tvoc: int, lower_bound_ppb: int) -> int:
+    """Map the TVOC increase above the start line to a comparable 1–100 score."""
+    increase = max(0, peak_tvoc - lower_bound_ppb)
+    return min(100, 1 + round(log1p(increase) / log1p(SCORE_CEILING_PPB) * 99))
+
+
+def increase_above_start(peak_tvoc: int, lower_bound_ppb: int) -> int:
     return max(0, peak_tvoc - lower_bound_ppb)
 
 
-def meter_segments(score_ppb: int, ceiling_ppb: int = DEFAULT_METER_CEILING_PPB) -> int:
-    """Map a nonnegative score to 20 segments on a logarithmic scale."""
-    if score_ppb <= 0:
+def meter_segments(increase_ppb: int, ceiling_ppb: int = DEFAULT_METER_CEILING_PPB) -> int:
+    """Map a nonnegative TVOC increase to 20 segments on a logarithmic scale."""
+    if increase_ppb <= 0:
         return 0
-    return min(20, max(1, round(log1p(score_ppb) / log1p(ceiling_ppb) * 20)))
+    return min(20, max(1, round(log1p(increase_ppb) / log1p(ceiling_ppb) * 20)))
 
 
-def projected_rank(score_ppb: int, scores: list[dict[str, str]]) -> int:
+def displayed_meter_segments(increase_ppb: int, elapsed_seconds: float,
+                             ceiling_ppb: int = DEFAULT_METER_CEILING_PPB) -> int:
+    """Reveal the live meter over the first five seconds of a round."""
+    progress = min(1.0, max(0.0, elapsed_seconds / METER_RISE_SECONDS))
+    return int(meter_segments(increase_ppb, ceiling_ppb) * progress)
+
+
+def projected_rank(score: int, scores: list[dict[str, str]]) -> int:
     """Place this round after existing scores with the same value."""
-    return 1 + sum(int(row["score_ppb"]) >= score_ppb for row in scores)
+    return 1 + sum(int(row["score"]) >= score for row in scores)
+
+
+def top_score_record(scores: list[dict[str, str]]) -> tuple[int, str]:
+    """Return the highest score and its initials, keeping the first tie."""
+    if not scores:
+        return 0, "---"
+    row = max(scores, key=lambda item: int(item["score"]))
+    return int(row["score"]), (row.get("initials") or "---")[:3].upper()
 
 
 def nose_frame_index(remaining_seconds: float) -> int:
@@ -121,7 +148,12 @@ def load_scores(path: Path) -> list[dict[str, str]]:
     if not path.exists():
         return []
     with path.open(newline="") as file:
-        return [row for row in csv.DictReader(file)]
+        rows = [row for row in csv.DictReader(file)]
+    for row in rows:
+        if not row.get("score"):
+            row["score"] = str(score_for(
+                int(row["peak_tvoc_ppb"]), int(row["score_lower_bound_ppb"])))
+    return rows
 
 
 def save_scores(path: Path, rows: list[dict[str, str]]) -> None:
@@ -131,6 +163,11 @@ def save_scores(path: Path, rows: list[dict[str, str]]) -> None:
         for row in rows:
             writer.writerow({field: row.get(
                 field, "---" if field == "initials" else "") for field in SCORE_FIELDS})
+
+
+def report_upload_result(future: Future[None]) -> None:
+    if error := future.exception():
+        print(f"S3 score upload failed: {error}", file=sys.stderr)
 
 
 def _runs(active: list[bool]) -> list[tuple[int, int]]:
@@ -261,6 +298,7 @@ class TVOCWindow(arcade.Window):
         threshold_ppb: int = DEFAULT_THRESHOLD_PPB,
         meter_ceiling_ppb: int = DEFAULT_METER_CEILING_PPB,
         scores_file: Path = Path("showerhacks_scores.csv"),
+        s3_bucket: str | None = None,
     ) -> None:
         width = TARGET_WIDTH if fullscreen else CANVAS_WIDTH * window_scale
         height = TARGET_HEIGHT if fullscreen else CANVAS_HEIGHT * window_scale
@@ -272,9 +310,11 @@ class TVOCWindow(arcade.Window):
         self.threshold_ppb = threshold_ppb
         self.meter_ceiling_ppb = meter_ceiling_ppb
         self.scores_file = scores_file
+        self.s3_bucket = s3_bucket
+        self.score_upload_executor = (ThreadPoolExecutor(max_workers=1, thread_name_prefix="score-upload")
+                                      if s3_bucket else None)
         self.scores = load_scores(scores_file)
-        self.best_score = max((int(row["score_ppb"])
-                              for row in self.scores), default=0)
+        self.best_score, self.best_initials = top_score_record(self.scores)
         self.nose_frames = load_nose_frames()
         self.underarm_frames = load_underarm_frames()
         self.shower_frames = load_shower_frames()
@@ -327,6 +367,7 @@ class TVOCWindow(arcade.Window):
         arcade.draw_lrbt_rectangle_filled(left, right, top - 4, top, edge)
 
     def on_mouse_press(self, x: float, y: float, button: int, modifiers: int) -> None:
+        self.set_mouse_visible(False)
         point = self.canvas.screen_to_canvas(x, y)
         if point is None:
             return
@@ -403,7 +444,9 @@ class TVOCWindow(arcade.Window):
         if self.view_state != "initials" or len(self.initials) != 3 or self.session_start is None or self.session_end is None:
             return
         score = score_for(self.peak_tvoc, self.score_lower_bound_ppb)
-        self.best_score = max(self.best_score, score)
+        if score > self.best_score:
+            self.best_score = score
+            self.best_initials = self.initials
         self.scores.append({
             "initials": self.initials,
             "started_at": self.session_start.isoformat(),
@@ -412,9 +455,13 @@ class TVOCWindow(arcade.Window):
             "threshold_ppb": str(self.threshold_ppb),
             "score_lower_bound_ppb": str(self.score_lower_bound_ppb),
             "peak_tvoc_ppb": str(self.peak_tvoc),
-            "score_ppb": str(score),
+            "score": str(score),
         })
         save_scores(self.scores_file, self.scores)
+        if self.score_upload_executor is not None and self.s3_bucket is not None:
+            future = self.score_upload_executor.submit(
+                upload_scores, self.scores_file, self.s3_bucket)
+            future.add_done_callback(report_upload_result)
         self.view_state = "leaderboard"
 
     def _draw_trend(self, readings: list, bottom: int, top: int) -> None:
@@ -474,8 +521,7 @@ class TVOCWindow(arcade.Window):
         arcade.draw_lrbt_rectangle_filled(237, 241, 25, 245, PURPLE)
         self._text("ROUND COMPLETE", 32, 210, GOLD, 15, ORANGE)
         self._text("YOUR SCORE", 32, 190, BLUE, 11)
-        score_size = 43 if score < 10_000 else 32
-        self._text(str(score), 30, 131, WHITE, score_size)
+        self._text(str(score), 30, 131, WHITE, 43)
         self._line(32, 117, 220, 117, PANEL_LIGHT, 2)
         self._text("YOUR RANK", 32, 90, BLUE, 11)
         self._text(f"#{rank}", 30, 43, GOLD, 39, ORANGE)
@@ -507,7 +553,7 @@ class TVOCWindow(arcade.Window):
         self._text("TAG", 87, 212, MUTED, 10)
         self._text("SCORE", 198, 212, MUTED, 10)
         top_five = sorted(self.scores, key=lambda row: int(
-            row["score_ppb"]), reverse=True)[:5]
+            row["score"]), reverse=True)[:5]
         if not top_five:
             self._text("NO SCORES YET", 56, 151, MUTED, 14)
         for index, row in enumerate(top_five):
@@ -519,7 +565,7 @@ class TVOCWindow(arcade.Window):
                                               rank_color)
             self._text(f"{index + 1}", 31, y, rank_color, 14)
             self._text(row.get("initials") or "---", 86, y, WHITE, 14)
-            self._text(row["score_ppb"], 198, y, ORANGE, 14)
+            self._text(row["score"], 198, y, ORANGE, 14)
 
         arcade.draw_lrbt_rectangle_filled(323, 466, 71, 204, PANEL)
         qr_size = self.leaderboard_qr.width * 3
@@ -550,8 +596,16 @@ class TVOCWindow(arcade.Window):
                              GOLD if ready else PANEL_LIGHT)
                 self._text("START" if ready else "WAITING FOR SENSOR", 172 if ready else 118,
                            99, BACKGROUND if ready else WHITE, 29 if ready else 17)
-                self._text(
-                    f"BEST SCORE  {self.best_score} PPB", 164, 57, GOLD, 10)
+                score_text = str(self.best_score)
+                by_text = f"BY {self.best_initials}"
+                label_width = bitmap_text("BEST SCORE", BLUE, 9).width
+                score_width = bitmap_text(score_text, GOLD, 20, ORANGE).width
+                by_width = bitmap_text(by_text, BLUE, 10).width
+                score_left = (CANVAS_WIDTH - label_width - score_width - by_width - 24) // 2 + label_width + 12
+                self._text("BEST SCORE", score_left - label_width - 12, 54, BLUE, 9)
+                self._text(score_text, score_left + 2, 47, PURPLE, 20)
+                self._text(score_text, score_left, 49, GOLD, 20, ORANGE)
+                self._text(by_text, score_left + score_width + 12, 54, BLUE, 10)
                 self._button(140, 340, 8, 45, PANEL, BLUE)
                 self._text("LEADERBOARD", 184, 20, WHITE, 12)
             elif self.view_state == "ready":
@@ -596,11 +650,14 @@ class TVOCWindow(arcade.Window):
                 round_score = score_for(
                     self.peak_tvoc, self.score_lower_bound_ppb)
                 self._line(180, 150, 458, 150, PANEL_LIGHT, 2)
-                self._text(f"SCORE  {round_score} PPB", 182, 128, GOLD, 12)
+                self._text(f"SCORE  {round_score}", 182, 128, GOLD, 12)
                 self._text(f"PEAK  {self.peak_tvoc} PPB", 182, 108, MUTED, 10)
-                current_score = score_for(
+                current_increase = increase_above_start(
                     current, self.score_lower_bound_ppb) if current_is_live else 0
-                filled = meter_segments(current_score, self.meter_ceiling_ppb)
+                elapsed = 0.0 if self.round_started_monotonic is None else \
+                    monotonic() - self.round_started_monotonic
+                filled = displayed_meter_segments(
+                    current_increase, elapsed, self.meter_ceiling_ppb)
                 for index in range(20):
                     left = 21 + index * 22
                     color = (BLUE if index < 5 else PURPLE if index < 10 else
@@ -668,6 +725,7 @@ def main() -> None:
         threshold_ppb=args.threshold,
         meter_ceiling_ppb=args.meter_ceiling,
         scores_file=args.scores_file,
+        s3_bucket=None if args.dev else os.environ.get("SHOWERHACKS_S3_BUCKET"),
     )
     poller.start()
     try:
