@@ -47,18 +47,6 @@
       background: repeating-linear-gradient(120deg, var(--orange) 0 14px, var(--background) 14px 28px);
     }
     main { position: relative; width: min(1000px, calc(100% - 48px)); margin: auto; }
-    .masthead {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 25px 0;
-      border-bottom: 1px solid #33415c;
-      color: var(--muted);
-      font: 11px/1.5 ui-monospace, monospace;
-      letter-spacing: .14em;
-    }
-    .brand { color: var(--white); }
-    .brand::before { content: "✦"; color: var(--blue); margin-right: 10px; }
     .hero { position: relative; padding: 47px 0 38px; text-align: center; }
     .eyebrow { color: var(--blue); font-size: 23px; letter-spacing: .14em; margin: 0 0 14px; }
     h1 { margin: 0; font-size: clamp(72px, 13vw, 148px); font-weight: normal; line-height: 1.05; }
@@ -76,19 +64,19 @@
     .shower.right { right: -8px; transform: scaleX(-1) rotate(-12deg); }
     .board { border: 1px solid #3b4a6a; background: var(--panel); box-shadow: 0 8px 0 #040818, 0 9px 0 #273553; }
     .board-title { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 23px 28px; border-bottom: 1px solid #3b4a6a; }
-    h2 { margin: 0; font-size: 29px; font-weight: normal; letter-spacing: .045em; }
+    h2 { margin: 0; font-size: 36px; font-weight: normal; letter-spacing: .045em; }
     .feed-label { display: flex; align-items: center; gap: 8px; color: var(--muted); font: 10px/1.5 ui-monospace, monospace; letter-spacing: .08em; }
     .feed-dot { width: 6px; height: 6px; background: var(--muted); }
     .board[data-feed="live"] .feed-dot { background: #8ae5b5; box-shadow: 0 0 10px #8ae5b555; }
     .board[data-feed="offline"] .feed-dot { background: var(--orange); }
     .board-heading, .score-row { display: grid; grid-template-columns: 100px 1fr 160px; align-items: center; gap: 16px; }
-    .board-heading { padding: 17px 28px 13px; color: var(--muted); font: 10px/1.5 ui-monospace, monospace; letter-spacing: .14em; }
+    .board-heading { padding: 17px 28px 13px; color: var(--muted); font: 12px/1.5 ui-monospace, monospace; letter-spacing: .14em; }
     .board-heading span:last-child { text-align: right; }
     #scores { padding: 0 12px 12px; }
-    .score-row { min-height: 76px; padding: 8px 16px; border-top: 1px solid #26324d; font-size: 38px; }
-    .score-row.gold { min-height: 88px; border: 1px solid #8b7540; background: linear-gradient(90deg, #393126, #222331); }
-    .rank { color: #7d90b4; font-size: 29px; }
-    .rank::before { content: "#"; opacity: .5; margin-right: 4px; font-size: 20px; }
+    .score-row { min-height: 96px; padding: 8px 16px; border-top: 1px solid #26324d; font-size: 64px; line-height: 1.15; }
+    .score-row.gold { min-height: 108px; border: 1px solid #8b7540; background: linear-gradient(90deg, #393126, #222331); }
+    .rank { color: #7d90b4; font-size: 44px; }
+    .rank::before { content: "#"; opacity: .5; margin-right: 4px; font-size: .65em; }
     .gold .rank, .gold .score { color: var(--gold); }
     .silver .rank { color: var(--silver); }
     .bronze .rank { color: var(--bronze); }
@@ -113,18 +101,17 @@
     }
     @media (max-width: 480px) {
       main { width: calc(100% - 28px); }
-      .masthead { font-size: 9px; padding: 18px 0; letter-spacing: .06em; }
       .intro { font-size: 11px; margin-top: 18px; }
       .hero-rule { font-size: 14px; }
       .board-title { padding: 19px 16px; gap: 8px; }
-      h2 { font-size: 25px; }
+      h2 { font-size: 30px; }
       .feed-label { font-size: 8px; }
-      .board-heading, .score-row { grid-template-columns: 48px 1fr 98px; gap: 8px; }
-      .board-heading { padding-inline: 20px; font-size: 9px; }
+      .board-heading, .score-row { grid-template-columns: 44px minmax(0, 1fr) 76px; gap: 8px; }
+      .board-heading { padding-inline: 20px; font-size: 10px; }
       #scores { padding: 0 7px 7px; }
-      .score-row { padding-inline: 12px; font-size: 32px; min-height: 70px; }
-      .score-row.gold { min-height: 82px; }
-      .rank { font-size: 25px; }
+      .score-row { padding-inline: 12px; font-size: 48px; min-height: 82px; }
+      .score-row.gold { min-height: 94px; }
+      .rank { font-size: 36px; }
       .board-footer { padding: 14px 16px; font-size: 9px; }
       .made-in-sf { padding: 27px 0 22px; font-size: 12px; }
       footer { font-size: 9px; }
@@ -134,7 +121,6 @@
 <body>
   <div class="stripe" aria-hidden="true"></div>
   <main>
-    <div class="masthead"><span class="brand">THE SMELL CHALLENGE</span><span>OFFICIAL HIGH SCORES</span></div>
     <header class="hero">
       <div class="shower left" aria-hidden="true"></div>
       <div class="shower right" aria-hidden="true"></div>
