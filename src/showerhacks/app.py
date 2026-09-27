@@ -1,6 +1,6 @@
 """Pixel-scaled Arcade dashboard for the latest TVOC and 50-reading trend."""
 
-from .sensor import DemoSensor, PicoSensor, Reading, SensorPoller
+from .sensor import MAX_GAME_TVOC_PPB, DemoSensor, PicoSensor, Reading, SensorPoller
 from .score_upload import upload_scores
 from PIL import Image, ImageDraw, ImageFont
 from arcade.types import LBWH
@@ -8,7 +8,7 @@ from arcade.gl import BufferDescription
 import arcade
 from time import monotonic
 from pathlib import Path
-from math import ceil, log1p
+from math import ceil
 from datetime import datetime
 from array import array
 from functools import lru_cache
@@ -35,11 +35,12 @@ SILVER = (199, 207, 221)
 BRONZE = (205, 123, 73)
 RED = (242, 49, 62)
 DEFAULT_THRESHOLD_PPB = 10
-DEFAULT_METER_CEILING_PPB = 60_000
-SCORE_CEILING_PPB = 2_000
+SCORE_CEILING_PPB = MAX_GAME_TVOC_PPB
+SCORE_HALF_POINT_PPB = 75
 METER_RISE_SECONDS = 5.0
-ROUND_SECONDS = 24.0
-READY_SECONDS = 7.0
+SCORE_WIGGLE_OFFSETS = (0, 1, 2, 3, 2, 0, -2, -3, -1)
+ROUND_SECONDS = 20.0
+READY_SECONDS = 5.0
 STRONG_SNIFF_SECONDS = 15.0
 MAX_SNIFF_SECONDS = 5.0
 SMALL_SNIFF_FRAMES = (0, 1, 2, 1)
@@ -97,27 +98,30 @@ def bitmap_text(value: str, color: tuple[int, int, int], size: int,
 
 
 def score_for(peak_tvoc: int, lower_bound_ppb: int) -> int:
-    """Map the TVOC increase above the start line to a comparable 1–100 score."""
+    """Map the TVOC increase above the start line to a comparable 1–99 score."""
     increase = max(0, peak_tvoc - lower_bound_ppb)
-    return min(100, 1 + round(log1p(increase) / log1p(SCORE_CEILING_PPB) * 99))
+    ceiling_fraction = SCORE_CEILING_PPB / (SCORE_CEILING_PPB + SCORE_HALF_POINT_PPB)
+    fraction = increase / (increase + SCORE_HALF_POINT_PPB)
+    return min(99, 1 + round(99 * fraction / ceiling_fraction))
 
 
-def increase_above_start(peak_tvoc: int, lower_bound_ppb: int) -> int:
-    return max(0, peak_tvoc - lower_bound_ppb)
-
-
-def meter_segments(increase_ppb: int, ceiling_ppb: int = DEFAULT_METER_CEILING_PPB) -> int:
-    """Map a nonnegative TVOC increase to 20 segments on a logarithmic scale."""
-    if increase_ppb <= 0:
+def meter_segments(score: int) -> int:
+    """Fill the 20-segment bar in proportion to the displayed 1–99 score."""
+    if score <= 1:
         return 0
-    return min(20, max(1, round(log1p(increase_ppb) / log1p(ceiling_ppb) * 20)))
+    return min(20, max(1, round((score - 1) / 98 * 20)))
 
 
-def displayed_meter_segments(increase_ppb: int, elapsed_seconds: float,
-                             ceiling_ppb: int = DEFAULT_METER_CEILING_PPB) -> int:
-    """Reveal the live meter over the first five seconds of a round."""
+def displayed_meter_segments(score: int, elapsed_seconds: float) -> int:
+    """Reveal the score bar over the first five seconds of a round."""
     progress = min(1.0, max(0.0, elapsed_seconds / METER_RISE_SECONDS))
-    return int(meter_segments(increase_ppb, ceiling_ppb) * progress)
+    return int(meter_segments(score) * progress)
+
+
+def displayed_score(score: int, elapsed_seconds: float) -> int:
+    """Add a small visual-only wobble to the large score number."""
+    offset = SCORE_WIGGLE_OFFSETS[int(max(0.0, elapsed_seconds) * 3) % len(SCORE_WIGGLE_OFFSETS)]
+    return max(1, min(99, score + offset))
 
 
 def projected_rank(score: int, scores: list[dict[str, str]]) -> int:
@@ -150,9 +154,8 @@ def load_scores(path: Path) -> list[dict[str, str]]:
     with path.open(newline="") as file:
         rows = [row for row in csv.DictReader(file)]
     for row in rows:
-        if not row.get("score"):
-            row["score"] = str(score_for(
-                int(row["peak_tvoc_ppb"]), int(row["score_lower_bound_ppb"])))
+        row["score"] = str(score_for(
+            int(row["peak_tvoc_ppb"]), int(row["score_lower_bound_ppb"])))
     return rows
 
 
@@ -296,7 +299,6 @@ class TVOCWindow(arcade.Window):
         fullscreen: bool = True,
         window_scale: int = 1,
         threshold_ppb: int = DEFAULT_THRESHOLD_PPB,
-        meter_ceiling_ppb: int = DEFAULT_METER_CEILING_PPB,
         scores_file: Path = Path("showerhacks_scores.csv"),
         s3_bucket: str | None = None,
     ) -> None:
@@ -308,7 +310,6 @@ class TVOCWindow(arcade.Window):
         self.poller = poller
         self.canvas = PixelCanvas(self)
         self.threshold_ppb = threshold_ppb
-        self.meter_ceiling_ppb = meter_ceiling_ppb
         self.scores_file = scores_file
         self.s3_bucket = s3_bucket
         self.score_upload_executor = (ThreadPoolExecutor(max_workers=1, thread_name_prefix="score-upload")
@@ -375,7 +376,7 @@ class TVOCWindow(arcade.Window):
         if self.view_state == "start":
             if 80 <= px < 400 and 75 <= py < 150:
                 room_reference = self.poller.room_reference()
-                if room_reference is None:
+                if room_reference is None or not self.poller.snapshot()[0]:
                     return
                 self.poller.set_room_sampling(False)
                 self.room_reference_ppb = room_reference
@@ -585,7 +586,7 @@ class TVOCWindow(arcade.Window):
             self._chrome()
             if self.view_state == "start":
                 self._draw_shower(80, 90, 180, 60)
-                ready = self.poller.room_reference() is not None
+                ready = bool(readings) and self.poller.room_reference() is not None
                 self._text("SHOWERHACKS CHALLENGE", 152, 234, BLUE, 10)
                 self._text("SHOWERMASTER", 113, 186, RED, 29)
                 self._text("SHOWERMASTER", 111, 189, GOLD, 29, ORANGE)
@@ -637,26 +638,21 @@ class TVOCWindow(arcade.Window):
 
                 round_score = score_for(
                     self.peak_tvoc, self.score_lower_bound_ppb)
-                self._text(str(round_score), 182, 174, GOLD, 42, ORANGE)
+                elapsed = 0.0 if self.round_started_monotonic is None else \
+                    monotonic() - self.round_started_monotonic
+                self._text(str(displayed_score(round_score, elapsed)), 182, 174, GOLD, 42, ORANGE)
                 self._text("SCORE", 184, 159, BLUE, 10)
                 if readings:
                     latest = readings[-1]
                     current = latest.tvoc_ppb
-                    current_is_live = self.session_start is not None and latest.taken_at >= self.session_start
                     current_text = f"TVOC  {current} PPB"
                 else:
                     current = 0
-                    current_is_live = False
                     current_text = "TVOC  -- PPB"
                 self._line(180, 150, 458, 150, PANEL_LIGHT, 2)
                 self._text(current_text, 182, 128, GOLD, 12)
                 self._text(f"PEAK  {self.peak_tvoc} PPB", 182, 108, MUTED, 10)
-                current_increase = increase_above_start(
-                    current, self.score_lower_bound_ppb) if current_is_live else 0
-                elapsed = 0.0 if self.round_started_monotonic is None else \
-                    monotonic() - self.round_started_monotonic
-                filled = displayed_meter_segments(
-                    current_increase, elapsed, self.meter_ceiling_ppb)
+                filled = displayed_meter_segments(round_score, elapsed)
                 for index in range(20):
                     left = 21 + index * 22
                     color = (BLUE if index < 5 else PURPLE if index < 10 else
@@ -698,31 +694,29 @@ def main() -> None:
                         help="Integer pixel scale in windowed mode (default: 1)")
     parser.add_argument("--threshold", type=int,
                         default=DEFAULT_THRESHOLD_PPB, help="TVOC score threshold in ppb")
-    parser.add_argument("--meter-ceiling", "--meter-range", dest="meter_ceiling",
-                        type=int, default=DEFAULT_METER_CEILING_PPB,
-                        help="Score at full logarithmic meter (default: 60000 ppb)")
     parser.add_argument("--scores-file", type=Path,
                         default=Path("showerhacks_scores.csv"), help="Round CSV path")
     parser.add_argument("--baseline-file", type=Path, default=Path(
         "sgp30_baselines.jsonl"), help="Sensor baseline log path")
+    parser.add_argument("--room-history-file", type=Path, default=Path(
+        "showerhacks_room_history.jsonl"), help="Five-minute room history path")
     args = parser.parse_args()
     if not args.dev and not args.port:
         parser.error("--port is required unless --dev is used")
-    if args.threshold < 0 or args.meter_ceiling <= 0:
-        parser.error(
-            "--threshold must be nonnegative and --meter-ceiling must be positive")
+    if args.threshold < 0:
+        parser.error("--threshold must be nonnegative")
     if args.scale < 1 or (args.scale != 1 and not args.windowed):
         parser.error(
             "--scale must be a positive integer and requires --windowed")
 
     poller = SensorPoller(DemoSensor if args.dev else lambda: PicoSensor(args.port),
-                          baseline_file=None if args.dev else args.baseline_file)
+                          baseline_file=None if args.dev else args.baseline_file,
+                          room_history_file=None if args.dev else args.room_history_file)
     window = TVOCWindow(
         poller,
         fullscreen=not args.windowed,
         window_scale=args.scale,
         threshold_ppb=args.threshold,
-        meter_ceiling_ppb=args.meter_ceiling,
         scores_file=args.scores_file,
         s3_bucket=None if args.dev else os.environ.get("SHOWERHACKS_S3_BUCKET"),
     )

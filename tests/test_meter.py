@@ -1,27 +1,36 @@
 import unittest
 
-from showerhacks.app import GOLD, ORANGE, bitmap_text, displayed_meter_segments, load_scores, meter_segments, nose_frame_index, projected_rank, score_for, top_score_record
+from showerhacks.app import GOLD, ORANGE, bitmap_text, displayed_meter_segments, displayed_score, load_scores, meter_segments, nose_frame_index, projected_rank, score_for, top_score_record
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 
 class MeterTest(unittest.TestCase):
-    def test_large_increases_remain_distinct(self) -> None:
-        self.assertEqual(meter_segments(0), 0)
-        self.assertLess(meter_segments(500), meter_segments(1000))
-        self.assertLess(meter_segments(1000), 20)
+    def test_meter_fill_follows_normalized_score(self) -> None:
+        self.assertEqual(meter_segments(1), 0)
+        self.assertEqual(meter_segments(50), 10)
+        self.assertEqual(meter_segments(99), 20)
+        self.assertLess(meter_segments(score_for(500, 0)),
+                        meter_segments(score_for(1000, 0)))
 
     def test_meter_reveals_live_fill_over_five_seconds(self) -> None:
-        target = meter_segments(1000)
-        self.assertEqual(displayed_meter_segments(1000, 0), 0)
-        self.assertEqual(displayed_meter_segments(1000, 2.5), target // 2)
-        self.assertEqual(displayed_meter_segments(1000, 5), target)
-        self.assertEqual(displayed_meter_segments(1000, 10), target)
+        target = meter_segments(65)
+        self.assertEqual(displayed_meter_segments(65, 0), 0)
+        self.assertEqual(displayed_meter_segments(65, 2.5), target // 2)
+        self.assertEqual(displayed_meter_segments(65, 5), target)
+        self.assertEqual(displayed_meter_segments(65, 10), target)
+
+    def test_large_score_wiggles_without_exceeding_score_limits(self) -> None:
+        values = {displayed_score(37, tick / 3) for tick in range(9)}
+        self.assertEqual(min(values), 34)
+        self.assertEqual(max(values), 40)
+        self.assertEqual(displayed_score(1, 1), 4)
+        self.assertEqual(displayed_score(99, 1), 99)
 
     def test_projected_rank_places_ties_after_saved_scores(self) -> None:
-        scores = [{"score": "100"}, {"score": "50"}]
-        self.assertEqual(projected_rank(101, scores), 1)
-        self.assertEqual(projected_rank(100, scores), 2)
+        scores = [{"score": "99"}, {"score": "50"}]
+        self.assertEqual(projected_rank(100, scores), 1)
+        self.assertEqual(projected_rank(99, scores), 2)
         self.assertEqual(projected_rank(75, scores), 2)
         self.assertEqual(projected_rank(50, scores), 3)
 
@@ -33,10 +42,15 @@ class MeterTest(unittest.TestCase):
             {"score": "67", "initials": "NEW"},
         ]), (67, "MJK"))
 
-    def test_normalized_score_uses_fixed_logarithmic_scale(self) -> None:
+    def test_normalized_score_spreads_common_readings(self) -> None:
         self.assertEqual(score_for(200, 240), 1)
+        self.assertEqual(score_for(265, 240), 26)
+        self.assertEqual(score_for(315, 240), 51)
+        self.assertEqual(score_for(340, 240), 58)
+        self.assertEqual(score_for(490, 240), 78)
         self.assertLess(score_for(740, 240), score_for(1240, 240))
-        self.assertEqual(score_for(2240, 240), 100)
+        self.assertEqual(score_for(5240, 240), 99)
+        self.assertEqual(score_for(60_240, 240), 99)
 
     def test_loads_old_ppb_scores_as_normalized_scores(self) -> None:
         with TemporaryDirectory() as directory:
@@ -46,10 +60,18 @@ class MeterTest(unittest.TestCase):
             rows = load_scores(path)
         self.assertEqual(rows[0]["score"], str(score_for(1240, 240)))
 
+    def test_recalculates_saved_scores_from_raw_readings(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "scores.csv"
+            path.write_text("initials,score_lower_bound_ppb,peak_tvoc_ppb,score\n"
+                            "ABC,240,490,73\n")
+            rows = load_scores(path)
+        self.assertEqual(rows[0]["score"], "78")
+
     def test_nose_intensifies_at_fifteen_and_five_seconds(self) -> None:
-        self.assertEqual(nose_frame_index(24.0), 0)
-        self.assertTrue(all(nose_frame_index(24 - tick / 10) in (0, 1, 2)
-                            for tick in range(90)))
+        self.assertEqual(nose_frame_index(20.0), 0)
+        self.assertTrue(all(nose_frame_index(20 - tick / 10) in (0, 1, 2)
+                            for tick in range(50)))
         self.assertEqual(nose_frame_index(15.0), 2)
         self.assertIn(3, {nose_frame_index(15 - tick / 10)
                           for tick in range(100)})

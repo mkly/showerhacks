@@ -10,6 +10,8 @@ wheels/
 .venv
 showerhacks_scores.csv
 sgp30_baselines.jsonl
+showerhacks_room_history.jsonl
+showerhacks_room_history.jsonl.tmp
 
 # Logs etc
 logs.txt

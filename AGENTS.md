@@ -31,7 +31,8 @@ uv run showerhacks --port /dev/ttyACM0
 ```
 
 For a sensor-free preview, run `uv run showerhacks --dev --windowed --scale 4`.
-Dev mode supplies changing TVOC readings and does not write sensor baselines.
+Dev mode supplies changing TVOC readings and does not read or write room history
+or write sensor baselines.
 
 The app opens full screen. It draws to a 480×270 pixel canvas and scales that
 canvas with sharp edges: 4× on the 1080p target display and 8× on a 4K display.
@@ -43,29 +44,47 @@ neighbor filtering.
 
 The START button becomes active once a valid TVOC reading arrives, including
 0 ppb during startup. Tap it to
-open a 7-second **GET READY!** screen with the underarm animation. The
-24-second smell round and peak recording begin when that countdown ends. The
+open a 5-second **GET READY!** screen with the underarm animation. The
+20-second smell round and peak recording begin when that countdown ends. The
 round countdown shows tenths of a second and flashes
 orange during the last five seconds. The nose animation grows stronger at 15
 seconds remaining and reaches its largest sniff cycle at five seconds. The
 round ends automatically at zero. When START is tapped, the game takes the
-median of the preceding minute's room readings as a fixed reference. It
+average of the preceding five minutes of room readings after rejecting outliers
+more than three scaled median absolute deviations from the median (with a
+minimum tolerance of 10 ppb). Zero readings are excluded while positive readings
+exist. The reference can fall to the most recent 15-second median when at least
+three room readings are available in that interval. This lets it recover after
+a spike without following one low reading. It
 excludes readings taken during GET READY and the active round from future room
 references, then resumes room sampling on the title screen. A round's start line
 is the room reference plus 10 ppb. For example, a room at 230 ppb sets the
-start line at 240 ppb. The increase above that line becomes a logarithmic
-score from 1 to 100, using a fixed 2,000 ppb increase as the top of the scale
-so scores stay comparable across rounds. The meter uses a logarithmic scale, so a 500 ppb increase and a
-1,000 ppb increase produce different fills. Its bar rises from empty to the live reading over the
-first five seconds of each round. The default ceiling is 60,000 ppb, the SGP30's maximum
-TVOC output.
+start line at 240 ppb. The increase above that line becomes a score from 1 to
+99 using a fixed curve that gives common readings more separation and caps at
+99 for large increases. An increase of 75 ppb above the start line scores about
+51, giving smaller responses more visible movement. The 20-segment bar tracks the round's best score, so a
+500 ppb increase and a 1,000 ppb increase produce different fills. Its bar
+rises from empty to the displayed score over the first five seconds of each
+round. Only the large on-screen number wiggles by up to three points; the bar,
+saved score, and leaderboard use the stable score.
+Readings above 5,000 ppb are ignored for gameplay as implausible spikes, while
+each rejected reading is written to the app log. The once-per-minute baseline
+log still records the raw TVOC value if a spike coincides with its sample.
+
+Every successful one-second sensor poll also saves the room buffer to
+`showerhacks_room_history.jsonl`, replacing it atomically. The file contains up
+to 300 room readings with timestamps, TVOC, and eCO₂; gameplay readings are
+excluded. On startup, only valid records less than five minutes old are restored.
+The game still requires a fresh sensor reading before START is enabled. It uses
+whatever recent history is available, with no five-minute startup wait. Use
+`--room-history-file` to change the path.
 
 After the timer ends, the split screen shows your score and projected rank.
 Enter three initials using the on-screen gradient letters and tap
 **SAVE SCORE**. The leaderboard shows the five highest scores and a QR code
-for <https://showerhacks.mkly.workers.dev>. Completed rounds are saved in `showerhacks_scores.csv` in the current
-directory. You can tune the deadband and log scale ceiling with `--threshold`
-and `--meter-ceiling`, or change the CSV path with `--scores-file`. The CSV's
+for <https://mkly.github.io/showerhacks>. Completed rounds are saved in `showerhacks_scores.csv` in the current
+directory. You can tune the deadband with `--threshold`, or change the CSV path
+with `--scores-file`. The CSV's
 `score` column contains the normalized value; raw TVOC measurements remain in
 the other columns. `web/index.html` reads the public CSV and refreshes every
 15 seconds.
