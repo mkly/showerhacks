@@ -33,9 +33,21 @@ class SensorPollerTest(unittest.TestCase):
         for index in range(100):
             poller._room_readings.append(Reading(now - timedelta(seconds=200 - index), 200, 400))
         for index in range(15):
-            poller._room_readings.append(Reading(now - timedelta(seconds=14 - index), 4000, 400))
+            poller._room_readings.append(Reading(now - timedelta(seconds=74 - index), 4000, 400))
         self.assertEqual(poller.room_reference(), 200)
         self.assertEqual(poller._room_readings.maxlen, 300)
+
+    def test_room_reference_tracks_rising_room_level_without_following_one_spike(self) -> None:
+        poller = SensorPoller(FakeSensor)
+        now = datetime.now().astimezone()
+        for index, value in enumerate([50] * 285 + [150] * 14 + [4000]):
+            poller._room_readings.append(Reading(now - timedelta(seconds=299 - index), value, 400))
+        self.assertEqual(poller.room_reference(), 150)
+
+        poller._room_readings.clear()
+        for index, value in enumerate([150] * 299 + [4000]):
+            poller._room_readings.append(Reading(now - timedelta(seconds=299 - index), value, 400))
+        self.assertEqual(poller.room_reference(), 150)
 
     def test_restores_only_recent_valid_room_readings(self) -> None:
         now = datetime.now().astimezone()

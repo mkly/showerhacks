@@ -50,12 +50,12 @@ round countdown shows tenths of a second and flashes
 orange during the last five seconds. The nose animation grows stronger at 15
 seconds remaining and reaches its largest sniff cycle at five seconds. The
 round ends automatically at zero. When START is tapped, the game takes the
-average of the preceding five minutes of room readings after rejecting outliers
-more than three scaled median absolute deviations from the median (with a
-minimum tolerance of 10 ppb). Zero readings are excluded while positive readings
-exist. The reference can fall to the most recent 15-second median when at least
-three room readings are available in that interval. This lets it recover after
-a spike without following one low reading. It
+median of the most recent 15 seconds of room readings when at least three
+samples are available. It follows both rising and falling room levels so an old,
+low reference does not award points for unchanged room air. With fewer recent
+samples it falls back to the five-minute average after rejecting outliers more
+than three scaled median absolute deviations from the median (with a minimum
+tolerance of 10 ppb). Zero readings are excluded while positive readings exist. It
 excludes readings taken during GET READY and the active round from future room
 references, then resumes room sampling on the title screen. A round's start line
 is the room reference plus 10 ppb. For example, a room at 230 ppb sets the

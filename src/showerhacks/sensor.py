@@ -161,7 +161,7 @@ class SensorPoller:
             self._room_sampling_enabled = enabled
 
     def room_reference(self) -> int | None:
-        """Average five minutes after MAD filtering, with faster downward recovery."""
+        """Use the current room level, falling back to filtered five-minute history."""
         now = datetime.now().astimezone()
         cutoff = now - timedelta(seconds=ROOM_HISTORY_SECONDS)
         with self._lock:
@@ -178,7 +178,9 @@ class SensorPoller:
         short = [item.tvoc_ppb for item in recent if item.taken_at >= recovery_cutoff]
         if len(short) >= 3:
             short_positive = [value for value in short if value > 0]
-            reference = min(reference, median(short_positive) if short_positive else 0)
+            # Follow sustained rises as well as falls: choosing the lower value
+            # lets an old, low room level award points before a player does anything.
+            reference = median(short_positive) if short_positive else 0
         return round(reference)
 
     def _poll(self) -> None:
