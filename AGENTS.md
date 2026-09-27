@@ -60,13 +60,31 @@ excludes readings taken during GET READY and the active round from future room
 references, then resumes room sampling on the title screen. A round's start line
 is the room reference plus 10 ppb. For example, a room at 230 ppb sets the
 start line at 240 ppb. The increase above that line becomes a score from 1 to
-99 using a fixed curve that gives common readings more separation and caps at
-99 for large increases. An increase of 75 ppb above the start line scores about
-51, giving smaller responses more visible movement. The 20-segment bar tracks the round's best score, so a
-500 ppb increase and a 1,000 ppb increase produce different fills. Its bar
+99 using a fixed exponential curve. A 43 ppb increase scores 40, 100 ppb scores
+69, and 200 ppb scores 90. The curve caps at 99 after rounding. The 20-segment
+bar tracks the round's best score. Its bar
 rises from empty to the displayed score over the first five seconds of each
 round. Only the large on-screen number wiggles by up to three points; the bar,
 saved score, and leaderboard use the stable score.
+
+The score formula is `min(99, 1 + round(98 * (1 - exp(-increase / scale))))`,
+where `increase = max(0, peak - start_line)` and
+`scale = 200 / ln(98 / 9)`, approximately 83.761 ppb. Solving the scale from
+the anchor makes +200 ppb score exactly 90 before rounding. The continuous
+curve is increasing, concave, and bounded: small changes stay responsive and
+larger increases have diminishing gains. It uses the
+[exponential CDF shape](https://www.itl.nist.gov/div898/handbook/eda/section3/eda3667.htm)
+as a game mapping, not an assumed statistical distribution or a validated
+measure of perceived odor. Python's `expm1` evaluates the expression accurately
+near zero. The scale stays fixed across rounds; the leaderboard never sets it.
+
+The 2026-09-26 tuning used 14 positive recorded increases from 43–196 ppb
+(median 83), excluding JJJ's 251 ppb increase because the user recalled blowing
+into the sensor. Most records predate the corrected room reference, so this is
+a provisional gameplay calibration. It cannot identify blowing from TVOC alone.
+Saved scores are recalculated from each row's recorded peak and starting line;
+this does not repair historical errors in the starting reference.
+
 Readings above 5,000 ppb are ignored for gameplay as implausible spikes, while
 each rejected reading is written to the app log. The once-per-minute baseline
 log still records the raw TVOC value if a spike coincides with its sample.

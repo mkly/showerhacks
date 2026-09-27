@@ -1,6 +1,6 @@
 """Pixel-scaled Arcade dashboard for the latest TVOC and 50-reading trend."""
 
-from .sensor import MAX_GAME_TVOC_PPB, DemoSensor, PicoSensor, Reading, SensorPoller
+from .sensor import DemoSensor, PicoSensor, Reading, SensorPoller
 from .score_upload import upload_scores
 from PIL import Image, ImageDraw, ImageFont
 from arcade.types import LBWH
@@ -8,7 +8,7 @@ from arcade.gl import BufferDescription
 import arcade
 from time import monotonic
 from pathlib import Path
-from math import ceil
+from math import ceil, expm1, log
 from datetime import datetime
 from array import array
 from functools import lru_cache
@@ -35,8 +35,9 @@ SILVER = (199, 207, 221)
 BRONZE = (205, 123, 73)
 RED = (242, 49, 62)
 DEFAULT_THRESHOLD_PPB = 10
-SCORE_CEILING_PPB = MAX_GAME_TVOC_PPB
-SCORE_HALF_POINT_PPB = 75
+SCORE_STRONG_INCREASE_PPB = 200
+# Solve 1 + 98 * (1 - exp(-200 / scale)) = 90.
+SCORE_SCALE_PPB = SCORE_STRONG_INCREASE_PPB / log(98 / 9)
 METER_RISE_SECONDS = 5.0
 SCORE_WIGGLE_OFFSETS = (0, 1, 2, 3, 2, 0, -2, -3, -1)
 ROUND_SECONDS = 20.0
@@ -98,11 +99,10 @@ def bitmap_text(value: str, color: tuple[int, int, int], size: int,
 
 
 def score_for(peak_tvoc: int, lower_bound_ppb: int) -> int:
-    """Map the TVOC increase above the start line to a comparable 1–99 score."""
+    """Use a fixed exponential curve: no increase scores 1; +200 ppb scores 90."""
     increase = max(0, peak_tvoc - lower_bound_ppb)
-    ceiling_fraction = SCORE_CEILING_PPB / (SCORE_CEILING_PPB + SCORE_HALF_POINT_PPB)
-    fraction = increase / (increase + SCORE_HALF_POINT_PPB)
-    return min(99, 1 + round(99 * fraction / ceiling_fraction))
+    fraction = -expm1(-increase / SCORE_SCALE_PPB)
+    return min(99, 1 + round(98 * fraction))
 
 
 def meter_segments(score: int) -> int:

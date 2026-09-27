@@ -10,8 +10,8 @@ class MeterTest(unittest.TestCase):
         self.assertEqual(meter_segments(1), 0)
         self.assertEqual(meter_segments(50), 10)
         self.assertEqual(meter_segments(99), 20)
-        self.assertLess(meter_segments(score_for(500, 0)),
-                        meter_segments(score_for(1000, 0)))
+        self.assertLess(meter_segments(score_for(100, 0)),
+                        meter_segments(score_for(200, 0)))
 
     def test_meter_reveals_live_fill_over_five_seconds(self) -> None:
         target = meter_segments(65)
@@ -45,12 +45,22 @@ class MeterTest(unittest.TestCase):
     def test_normalized_score_spreads_common_readings(self) -> None:
         self.assertEqual(score_for(200, 240), 1)
         self.assertEqual(score_for(265, 240), 26)
-        self.assertEqual(score_for(315, 240), 51)
-        self.assertEqual(score_for(340, 240), 58)
-        self.assertEqual(score_for(490, 240), 78)
-        self.assertLess(score_for(740, 240), score_for(1240, 240))
+        self.assertEqual(score_for(283, 240), 40)
+        self.assertEqual(score_for(315, 240), 59)
+        self.assertEqual(score_for(340, 240), 69)
+        self.assertEqual(score_for(440, 240), 90)
+        self.assertEqual(score_for(490, 240), 94)
+        self.assertLess(score_for(340, 240), score_for(440, 240))
         self.assertEqual(score_for(5240, 240), 99)
         self.assertEqual(score_for(60_240, 240), 99)
+
+    def test_score_is_monotonic_bounded_and_relative_to_start(self) -> None:
+        scores = [score_for(increase, 0) for increase in range(60_001)]
+        self.assertEqual(scores, sorted(scores))
+        self.assertEqual(min(scores), 1)
+        self.assertEqual(max(scores), 99)
+        for increase in (0, 10, 43, 100, 200, 500):
+            self.assertEqual(score_for(increase, 0), score_for(240 + increase, 240))
 
     def test_loads_old_ppb_scores_as_normalized_scores(self) -> None:
         with TemporaryDirectory() as directory:
@@ -66,7 +76,7 @@ class MeterTest(unittest.TestCase):
             path.write_text("initials,score_lower_bound_ppb,peak_tvoc_ppb,score\n"
                             "ABC,240,490,73\n")
             rows = load_scores(path)
-        self.assertEqual(rows[0]["score"], "78")
+        self.assertEqual(rows[0]["score"], "94")
 
     def test_nose_intensifies_at_fifteen_and_five_seconds(self) -> None:
         self.assertEqual(nose_frame_index(20.0), 0)
