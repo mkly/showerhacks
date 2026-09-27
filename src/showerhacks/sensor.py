@@ -5,9 +5,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 import json
 import sys
-from math import pi, sin
+from math import ceil, pi, sin
 from pathlib import Path
-from statistics import fmean, median
+from statistics import median
 from threading import Event, Lock, Thread
 from time import monotonic
 from typing import Callable, Protocol
@@ -16,6 +16,7 @@ from typing import Callable, Protocol
 MAX_GAME_TVOC_PPB = 5_000
 ROOM_HISTORY_SECONDS = 300
 ROOM_RECOVERY_SECONDS = 15
+MAX_SAMPLE_GAP_SECONDS = 2.5
 
 
 class SGP30(Protocol):
@@ -81,6 +82,18 @@ class Reading:
     eco2_ppm: int
 
 
+def sustained_peak(readings: list[Reading], start: datetime, end: datetime) -> int:
+    """Best three-sample median within the round; never bridge missing samples."""
+    samples = [item for item in readings if start <= item.taken_at <= end]
+    peak = 0
+    for index in range(2, len(samples)):
+        window = samples[index - 2:index + 1]
+        if all(0 < (right.taken_at - left.taken_at).total_seconds() <= MAX_SAMPLE_GAP_SECONDS
+               for left, right in zip(window, window[1:])):
+            peak = max(peak, int(median(item.tvoc_ppb for item in window)))
+    return peak
+
+
 class SensorPoller:
     def __init__(
         self,
@@ -98,6 +111,7 @@ class SensorPoller:
         self._readings: deque[Reading] = deque(maxlen=50)
         self._room_readings: deque[Reading] = deque(maxlen=ROOM_HISTORY_SECONDS)
         self._room_sampling_enabled = True
+        self._room_sampling_since = datetime.now().astimezone()
         self._lock = Lock()
         self._stop = Event()
         self._thread = Thread(target=self._poll, name="sgp30-poller", daemon=True)
@@ -158,30 +172,43 @@ class SensorPoller:
 
     def set_room_sampling(self, enabled: bool) -> None:
         with self._lock:
+            if enabled and not self._room_sampling_enabled:
+                self._room_sampling_since = datetime.now().astimezone()
             self._room_sampling_enabled = enabled
 
-    def room_reference(self) -> int | None:
-        """Use the current room level, falling back to filtered five-minute history."""
+    def starting_conditions(self, *, freeze: bool = False) -> tuple[int, int] | None:
+        """Fresh title-screen median and one robust standard deviation in ppb.
+
+        Persisted history never substitutes for this round's starting samples.
+        Freezing captures the reference and pauses room sampling under one lock.
+        """
         now = datetime.now().astimezone()
-        cutoff = now - timedelta(seconds=ROOM_HISTORY_SECONDS)
         with self._lock:
-            recent = [item for item in self._room_readings if cutoff <= item.taken_at <= now]
-        positive = [item.tvoc_ppb for item in recent if item.tvoc_ppb > 0]
-        if not positive:
-            return 0 if recent else None
-        center = median(positive)
-        mad = median(abs(value - center) for value in positive)
-        # A 10 ppb floor handles steady readings where MAD is zero.
-        limit = max(10, 3 * 1.4826 * mad)
-        reference = fmean(value for value in positive if abs(value - center) <= limit)
-        recovery_cutoff = now - timedelta(seconds=ROOM_RECOVERY_SECONDS)
-        short = [item.tvoc_ppb for item in recent if item.taken_at >= recovery_cutoff]
-        if len(short) >= 3:
-            short_positive = [value for value in short if value > 0]
-            # Follow sustained rises as well as falls: choosing the lower value
-            # lets an old, low room level award points before a player does anything.
-            reference = median(short_positive) if short_positive else 0
-        return round(reference)
+            cutoff = max(self._room_sampling_since,
+                         now - timedelta(seconds=ROOM_RECOVERY_SECONDS))
+            recent = [item for item in self._room_readings
+                      if cutoff <= item.taken_at <= now]
+            if not recent or (now - recent[-1].taken_at).total_seconds() > MAX_SAMPLE_GAP_SECONDS:
+                return None
+            # Use only the contiguous tail following a disconnect or missed reads.
+            for index in range(len(recent) - 1, 0, -1):
+                if (recent[index].taken_at - recent[index - 1].taken_at).total_seconds() > MAX_SAMPLE_GAP_SECONDS:
+                    recent = recent[index:]
+                    break
+            if len(recent) < 3:
+                return None
+            values = [item.tvoc_ppb for item in recent]
+            center = median(values)
+            mad = median(abs(value - center) for value in values)
+            if freeze:
+                if not self._room_sampling_enabled:
+                    return None
+                self._room_sampling_enabled = False
+            return round(center), ceil(1.4826 * mad)
+
+    def room_reference(self) -> int | None:
+        conditions = self.starting_conditions()
+        return conditions[0] if conditions is not None else None
 
     def _poll(self) -> None:
         try:

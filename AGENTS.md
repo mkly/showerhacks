@@ -42,24 +42,31 @@ window on a 4K monitor, run
 window. Scaling always uses whole pixels and nearest
 neighbor filtering.
 
-The START button becomes active once a valid TVOC reading arrives, including
-0 ppb during startup. Tap it to
+The START button becomes active after three fresh, consecutive room readings,
+including 0 ppb during startup. Tap it to
 open a 5-second **GET READY!** screen with the underarm animation. The
 20-second smell round and peak recording begin when that countdown ends. The
 round countdown shows tenths of a second and flashes
 orange during the last five seconds. The nose animation grows stronger at 15
 seconds remaining and reaches its largest sniff cycle at five seconds. The
 round ends automatically at zero. When START is tapped, the game takes the
-median of the most recent 15 seconds of room readings when at least three
-samples are available. It follows both rising and falling room levels so an old,
-low reference does not award points for unchanged room air. With fewer recent
-samples it falls back to the five-minute average after rejecting outliers more
-than three scaled median absolute deviations from the median (with a minimum
-tolerance of 10 ppb). Zero readings are excluded while positive readings exist. It
-excludes readings taken during GET READY and the active round from future room
-references, then resumes room sampling on the title screen. A round's start line
-is the room reference plus 10 ppb. For example, a room at 230 ppb sets the
-start line at 240 ppb. The increase above that line becomes a score from 1 to
+median of up to the most recent 15 seconds of title-screen readings. At least
+three readings are required, with no gap over 2.5 seconds and the latest no more
+than 2.5 seconds old. Startup and returning to the title screen require new
+samples; persisted five-minute history cannot substitute for a fresh start.
+Zero readings participate in the median. The reference is frozen before GET READY.
+Readings during GET READY, the round, and score entry are excluded from room
+sampling, which resumes on the title screen.
+
+The noise allowance is `ceil(1.4826 * MAD)`, where MAD is the median absolute
+deviation from that same recent median. The scoring start line is the reference
+plus `max(--threshold, noise_allowance)`; the default threshold remains 10 ppb.
+This uses one robust standard deviation as a modest gameplay noise allowance,
+not a calibrated probability or a guarantee against room drift. A steady room
+at 230 ppb still starts scoring above 240 ppb. Each round scores its highest
+rolling three-reading median, requiring a full window and never bridging gaps
+longer than 2.5 seconds. Isolated one-second spikes cannot set the peak; sustained
+blowing can still resemble a strong response. The increase above that line becomes a score from 1 to
 99 using a fixed exponential curve. A 43 ppb increase scores 40, 100 ppb scores
 69, and 200 ppb scores 90. The curve caps at 99 after rounding. The 20-segment
 bar tracks the round's best score. Its bar
@@ -78,12 +85,13 @@ as a game mapping, not an assumed statistical distribution or a validated
 measure of perceived odor. Python's `expm1` evaluates the expression accurately
 near zero. The scale stays fixed across rounds; the leaderboard never sets it.
 
-The 2026-09-26 tuning used 14 positive recorded increases from 43–196 ppb
-(median 83), excluding JJJ's 251 ppb increase because the user recalled blowing
-into the sensor. Most records predate the corrected room reference, so this is
-a provisional gameplay calibration. It cannot identify blowing from TVOC alone.
-Saved scores are recalculated from each row's recorded peak and starting line;
-this does not repair historical errors in the starting reference.
+The existing exponential curve is retained as a gameplay choice. Historical
+runs were one person's desk trials in different positions, not a representative
+population for calibration or an outlier cutoff. Saved scores are recalculated
+from each row's recorded peak and starting line. New rows store the filtered
+peak in `peak_tvoc_ppb` and the effective noise allowance/deadband in
+`threshold_ppb`; old rows retain their original individual peaks because the
+full round samples needed to filter them were not recorded.
 
 Readings above 5,000 ppb are ignored for gameplay as implausible spikes, while
 each rejected reading is written to the app log. The once-per-minute baseline
@@ -93,8 +101,8 @@ Every successful one-second sensor poll also saves the room buffer to
 `showerhacks_room_history.jsonl`, replacing it atomically. The file contains up
 to 300 room readings with timestamps, TVOC, and eCO₂; gameplay readings are
 excluded. On startup, only valid records less than five minutes old are restored.
-The game still requires a fresh sensor reading before START is enabled. It uses
-whatever recent history is available, with no five-minute startup wait. Use
+The game requires three fresh room readings before START is enabled, with no
+five-minute startup wait. Use
 `--room-history-file` to change the path.
 
 After the timer ends, the split screen shows your score and projected rank.
@@ -103,7 +111,7 @@ Enter three initials using the on-screen gradient letters and tap
 for <https://mkly.github.io/showerhacks>. Completed rounds are saved in `showerhacks_scores.csv` in the current
 directory. You can tune the deadband with `--threshold`, or change the CSV path
 with `--scores-file`. The CSV's
-`score` column contains the normalized value; raw TVOC measurements remain in
+`score` column contains the normalized value; the starting reference and filtered TVOC peak remain in
 the other columns. `web/index.html` reads the public CSV and refreshes every
 15 seconds.
 

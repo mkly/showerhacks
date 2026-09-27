@@ -1,6 +1,6 @@
 """Pixel-scaled Arcade dashboard for the latest TVOC and 50-reading trend."""
 
-from .sensor import DemoSensor, PicoSensor, Reading, SensorPoller
+from .sensor import DemoSensor, PicoSensor, Reading, SensorPoller, sustained_peak
 from .score_upload import upload_scores
 from PIL import Image, ImageDraw, ImageFont
 from arcade.types import LBWH
@@ -9,7 +9,7 @@ import arcade
 from time import monotonic
 from pathlib import Path
 from math import ceil, expm1, log
-from datetime import datetime
+from datetime import datetime, timedelta
 from array import array
 from functools import lru_cache
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -375,12 +375,12 @@ class TVOCWindow(arcade.Window):
         px, py = point
         if self.view_state == "start":
             if 80 <= px < 400 and 75 <= py < 150:
-                room_reference = self.poller.room_reference()
-                if room_reference is None or not self.poller.snapshot()[0]:
+                conditions = self.poller.starting_conditions(freeze=True)
+                if conditions is None:
                     return
-                self.poller.set_room_sampling(False)
+                room_reference, noise_ppb = conditions
                 self.room_reference_ppb = room_reference
-                self.score_lower_bound_ppb = room_reference + self.threshold_ppb
+                self.score_lower_bound_ppb = room_reference + max(self.threshold_ppb, noise_ppb)
                 self.session_start = None
                 self.session_end = None
                 self.peak_tvoc = 0
@@ -428,8 +428,9 @@ class TVOCWindow(arcade.Window):
     def _update_peak(self, readings: list) -> None:
         if self.view_state == "meter" and self.session_start is not None:
             self.peak_tvoc = max(
-                [self.peak_tvoc] +
-                [item.tvoc_ppb for item in readings if item.taken_at >= self.session_start]
+                self.peak_tvoc,
+                sustained_peak(readings, self.session_start,
+                               self.session_start + timedelta(seconds=ROUND_SECONDS)),
             )
 
     def finish_round(self) -> None:
@@ -453,7 +454,7 @@ class TVOCWindow(arcade.Window):
             "started_at": self.session_start.isoformat(),
             "ended_at": self.session_end.isoformat(),
             "room_reference_ppb": str(self.room_reference_ppb),
-            "threshold_ppb": str(self.threshold_ppb),
+            "threshold_ppb": str(self.score_lower_bound_ppb - self.room_reference_ppb),
             "score_lower_bound_ppb": str(self.score_lower_bound_ppb),
             "peak_tvoc_ppb": str(self.peak_tvoc),
             "score": str(score),

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from showerhacks.sensor import Reading, SensorPoller
+from showerhacks.sensor import Reading, SensorPoller, sustained_peak
 
 
 class FakeSensor:
@@ -27,19 +27,20 @@ class FakeSensor:
 
 
 class SensorPollerTest(unittest.TestCase):
-    def test_five_minute_reference_filters_outliers_with_zero_mad(self) -> None:
+    def test_old_room_history_cannot_enable_start(self) -> None:
         poller = SensorPoller(FakeSensor)
         now = datetime.now().astimezone()
         for index in range(100):
             poller._room_readings.append(Reading(now - timedelta(seconds=200 - index), 200, 400))
         for index in range(15):
             poller._room_readings.append(Reading(now - timedelta(seconds=74 - index), 4000, 400))
-        self.assertEqual(poller.room_reference(), 200)
+        self.assertIsNone(poller.room_reference())
         self.assertEqual(poller._room_readings.maxlen, 300)
 
     def test_room_reference_tracks_rising_room_level_without_following_one_spike(self) -> None:
         poller = SensorPoller(FakeSensor)
         now = datetime.now().astimezone()
+        poller._room_sampling_since = now - timedelta(seconds=300)
         for index, value in enumerate([50] * 285 + [150] * 14 + [4000]):
             poller._room_readings.append(Reading(now - timedelta(seconds=299 - index), value, 400))
         self.assertEqual(poller.room_reference(), 150)
@@ -48,6 +49,44 @@ class SensorPollerTest(unittest.TestCase):
         for index, value in enumerate([150] * 299 + [4000]):
             poller._room_readings.append(Reading(now - timedelta(seconds=299 - index), value, 400))
         self.assertEqual(poller.room_reference(), 150)
+
+    def test_start_uses_fresh_median_and_robust_noise_and_freezes(self) -> None:
+        poller = SensorPoller(FakeSensor)
+        now = datetime.now().astimezone()
+        poller._room_sampling_since = now - timedelta(seconds=15)
+        for index, value in enumerate([80, 90, 100, 110, 4000]):
+            poller._room_readings.append(Reading(now - timedelta(seconds=4-index), value, 400))
+        self.assertEqual(poller.starting_conditions(freeze=True), (100, 15))
+        self.assertFalse(poller._room_sampling_enabled)
+        poller.set_room_sampling(True)
+        self.assertIsNone(poller.starting_conditions())
+
+    def test_start_requires_three_current_contiguous_samples(self) -> None:
+        poller = SensorPoller(FakeSensor)
+        now = datetime.now().astimezone()
+        poller._room_sampling_since = now - timedelta(seconds=20)
+        for age in (10, 9, 8):
+            poller._room_readings.append(Reading(now - timedelta(seconds=age), 100, 400))
+        self.assertIsNone(poller.starting_conditions())
+        for age in (2, 1):
+            poller._room_readings.append(Reading(now - timedelta(seconds=age), 200, 400))
+        self.assertIsNone(poller.starting_conditions())
+        poller._room_readings.append(Reading(now, 200, 400))
+        self.assertEqual(poller.starting_conditions(), (200, 0))
+
+    def test_sustained_peak_rejects_one_spike_but_keeps_a_sustained_rise(self) -> None:
+        start = datetime.now().astimezone()
+        def readings(values):
+            return [Reading(start + timedelta(seconds=index), value, 400)
+                    for index, value in enumerate(values)]
+        end = start + timedelta(seconds=20)
+        self.assertEqual(sustained_peak(readings([100, 100, 4000, 100, 100]), start, end), 100)
+        self.assertEqual(sustained_peak(readings([100, 200, 210, 200, 100]), start, end), 200)
+        self.assertEqual(sustained_peak(readings([4000, 4000]), start, end), 0)
+        # GET READY and late samples cannot contribute, nor can samples across a gap.
+        samples = [Reading(start + timedelta(seconds=offset), 4000, 400)
+                   for offset in (-2, -1, 0, 10, 20, 21, 22)]
+        self.assertEqual(sustained_peak(samples, start, end), 0)
 
     def test_restores_only_recent_valid_room_readings(self) -> None:
         now = datetime.now().astimezone()
@@ -62,7 +101,7 @@ class SensorPollerTest(unittest.TestCase):
                             + '\n{"timestamp":\nnull\n')
             poller = SensorPoller(FakeSensor, room_history_file=path)
             self.assertEqual([item.tvoc_ppb for item in poller._room_readings], [200, 220])
-            self.assertEqual(poller.room_reference(), 210)
+            self.assertIsNone(poller.room_reference())
             self.assertEqual(poller.snapshot()[0], [])
 
     def test_room_history_survives_restart_without_round_readings(self) -> None:
@@ -85,12 +124,13 @@ class SensorPollerTest(unittest.TestCase):
             self.assertTrue(records)
             self.assertLess(max(record["tvoc_ppb"] for record in records), sensor.calls)
             restored = SensorPoller(FakeSensor, room_history_file=path)
-            self.assertEqual(restored.room_reference(), frozen)
+            self.assertIsNone(restored.room_reference())
             self.assertEqual(list(restored._room_readings), list(poller._room_readings))
 
     def test_room_reference_follows_recovery_after_a_high_spike(self) -> None:
         poller = SensorPoller(FakeSensor)
         now = datetime.now().astimezone()
+        poller._room_sampling_since = now - timedelta(seconds=300)
         for index, value in enumerate([2800] * 285 + [250] * 15):
             poller._room_readings.append(Reading(now - timedelta(seconds=299 - index), value, 400))
         self.assertEqual(poller.room_reference(), 250)
@@ -124,7 +164,7 @@ class SensorPollerTest(unittest.TestCase):
         self.assertEqual(readings[0].tvoc_ppb, 250)
         self.assertIn(260, [reading.tvoc_ppb for reading in readings])
         self.assertNotIn(47_347, [reading.tvoc_ppb for reading in readings])
-        self.assertLessEqual(poller.room_reference(), 260)
+        self.assertTrue(all(reading.tvoc_ppb <= 260 for reading in readings))
         self.assertIn(47_347, logged)
 
     def test_round_readings_do_not_change_room_reference(self) -> None:
@@ -142,7 +182,7 @@ class SensorPollerTest(unittest.TestCase):
         self.assertGreaterEqual(sensor.calls, paused_at + 5)
         self.assertEqual(poller.room_reference(), frozen_reference)
         poller.set_room_sampling(True)
-        while poller.room_reference() == frozen_reference and time.monotonic() < deadline:
+        while (poller.room_reference() is None or poller.room_reference() == frozen_reference) and time.monotonic() < deadline:
             time.sleep(0.005)
         poller.stop()
         self.assertGreater(poller.room_reference(), frozen_reference)
@@ -154,7 +194,7 @@ class SensorPollerTest(unittest.TestCase):
         self.assertIsNone(poller.room_reference())
         poller.start()
         deadline = time.monotonic() + 2
-        while not poller.snapshot()[0] and time.monotonic() < deadline:
+        while len(poller.snapshot()[0]) < 3 and time.monotonic() < deadline:
             time.sleep(0.005)
         poller.stop()
         self.assertEqual(poller.room_reference(), 0)
